@@ -19,6 +19,34 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 | `docker/` | Images `agent` (starter + GPU, sans internet) et `grader`. |
 | `task.py` | *(à venir)* Tâche Inspect AI, paramétrée par `hint_level`. |
 
+## Générer le starter
+
+```bash
+python rlenv/sanitize.py          # écrit rlenv/starter/ (git init neuf)
+python -m pytest rlenv/tests      # starter == référence sans score centering
+```
+
+`sanitize.py` copie la racine sans `README.md`, `assets/`, `sweeps/` ni
+`tests/`, retire le score centering de `losses.py` et `train_rl.py`, réécrit
+les docstrings qui le mentionnent, renomme `center_ids` / `center_logprobs`
+en `sampler_topk_ids` / `sampler_topk_logprobs`, écrit un README neutre, puis
+audite le résultat (grep de mots révélateurs). Chaque modification doit
+correspondre exactement au code de référence (empreintes SHA-256) : si le
+code original change, le script échoue au lieu de laisser passer la méthode.
+
+### Décisions ouvertes
+
+- **Top-k de l'échantillonneur conservé** : la distribution top-k est
+  toujours enregistrée (`sampler.vocab_logprobs: 128`) et présente dans le
+  batch, documentée comme une donnée standard. Sans elle, la méthode est
+  infaisable ; avec, c'est un léger indice.
+- **`log_mass`** reste dans `losses.py` (utilisée par `is_weight`) avec une
+  docstring neutre. Sa forme générale `log(q * w(p/q))` est un indice faible.
+- **`LICENSE`** garde le nom de l'auteur (obligation de la licence MIT).
+- **Contamination** : le README original indique que le score centering est
+  déjà intégré à verl, TRL, slime, prime-rl, etc. Tout modèle dont les données
+  vont au-delà de septembre 2026 est probablement contaminé.
+
 ## Flux
 
 ```
