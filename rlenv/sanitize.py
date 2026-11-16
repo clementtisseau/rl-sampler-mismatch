@@ -10,9 +10,17 @@ makes this script fail loudly instead of silently leaving the method in.
 After building, an audit greps the starter for words that would give the
 method away and fails on any hit outside a short allowlist.
 
+Two variants differ only in how visible the sampler's next-token
+distribution is:
+    topk-hint: recorded by default (top-k, k=128), passed in the loss batch and
+               documented in the loss docstring and README.
+    no-hint:   off by default (sampler.vocab_logprobs: null), never passed to
+               the loss nor mentioned outside the sampler. The capability stays
+               in the sampler, like a `logprobs=k` option of an inference engine.
+
 Usage (from the repository root):
-    python rlenv/sanitize.py              # writes rlenv/starter/ and git-inits it
-    python rlenv/sanitize.py --out DIR --no-git
+    python rlenv/sanitize.py              # both variants in rlenv/starter/<variant>/, git-inited
+    python rlenv/sanitize.py --variant no-hint --out DIR --no-git
 """
 import argparse
 import hashlib
@@ -192,6 +200,34 @@ Defaults live in each trainer; override them with `key=value` arguments. Use
 `outputs/`.
 """
 
+# Extra edits for the no-hint variant, applied to the topk-hint starter.
+NO_HINT_EDITS = [
+    ("train_rl.py",
+     "  vocab_logprobs: 128  # sampler next-token distribution recorded per position: null | k (top-k) | full",
+     "  vocab_logprobs: null  # also return the sampler's top logprobs per position: null | k | full"),
+    ("losses.py",
+     """    batch: tokens, mask (completion tokens), advantages [B], and what the
+    sampler recorded while generating: sampling_token_logprobs [B, T] for the
+    sampled tokens, plus its next-token distribution at every position, either
+    as a top-k head sampler_topk_ids / sampler_topk_logprobs [B, T, k]
+    (sampler.vocab_logprobs=k) or in full as sampling_vocab_logprobs [B, T, V]
+    (sampler.vocab_logprobs=full).
+""",
+     """    batch: tokens, mask (completion tokens), advantages [B], and
+    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+"""),
+    ("losses.py",
+     'sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")',
+     'sampler_keys = ("sampling_token_logprobs",)'),
+    ("README.md",
+     """For every generated position the sampler records the sampled token's logprob
+and its next-token distribution (`sampler.vocab_logprobs`: top-k, `full`, or
+`null`). The loss is in [`losses.py`](losses.py).""",
+     """The sampler records the logprob of every sampled token. The loss is in
+[`losses.py`](losses.py)."""),
+]
+VARIANTS = ("topk-hint", "no-hint")
+
 # Audit: words that would reveal the method or its source. A hit fails the
 # build unless its line matches an ALLOW pattern; LICENSE is exempt (the MIT
 # license requires keeping its copyright notice).
@@ -232,7 +268,7 @@ def copy_tree(out):
     shutil.copytree(ROOT, out, ignore=ignore)
 
 
-def transform(out):
+def transform(out, variant):
     files = {}
     for path, *_ in EDITS + SPANS:
         files.setdefault(path, (out / path).read_text())
@@ -243,6 +279,9 @@ def transform(out):
     for path, text in files.items():
         (out / path).write_text(text)
     (out / "README.md").write_text(README)
+    if variant == "no-hint":
+        for path, old, new in NO_HINT_EDITS:
+            (out / path).write_text(apply_edit((out / path).read_text(), old, new, f"{path} (no-hint)"))
 
 
 def audit(out):
@@ -271,22 +310,31 @@ def git_init(out):
     run("commit", "-q", "-m", "Initial commit")
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--out", type=Path, default=HERE / "starter")
-    parser.add_argument("--no-git", action="store_true", help="skip git init of the starter")
-    args = parser.parse_args()
-    out = args.out.resolve()
+def build(variant, out, git=True):
+    out = out.resolve()
     if out.exists():
         shutil.rmtree(out)
     copy_tree(out)
-    transform(out)
+    transform(out, variant)
     hits = audit(out)
     if hits:
-        raise SystemExit("audit failed, possible leaks:\n" + "\n".join(hits))
-    if not args.no_git:
+        raise SystemExit(f"{variant}: audit failed, possible leaks:\n" + "\n".join(hits))
+    if git:
         git_init(out)
-    print(f"starter written to {out} ({sum(1 for f in out.rglob('*') if f.is_file() and '.git' not in f.parts)} files), audit clean")
+    n = sum(1 for f in out.rglob("*") if f.is_file() and ".git" not in f.parts)
+    print(f"{variant}: starter written to {out} ({n} files), audit clean")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--variant", choices=VARIANTS, help="build one variant (default: both)")
+    parser.add_argument("--out", type=Path, help="output dir (requires --variant; default rlenv/starter/<variant>)")
+    parser.add_argument("--no-git", action="store_true", help="skip git init of the starter")
+    args = parser.parse_args()
+    if args.out and not args.variant:
+        parser.error("--out requires --variant")
+    for variant in [args.variant] if args.variant else VARIANTS:
+        build(variant, args.out or HERE / "starter" / variant, git=not args.no_git)
 
 
 if __name__ == "__main__":

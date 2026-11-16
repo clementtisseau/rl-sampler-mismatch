@@ -26,16 +26,17 @@ def load(path, name):
     return module
 
 
-@pytest.fixture(scope="module")
-def starter(tmp_path_factory):
-    out = tmp_path_factory.mktemp("starter")
-    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--out", str(out), "--no-git"], check=True)
+@pytest.fixture(scope="module", params=["topk-hint", "no-hint"])
+def starter(request, tmp_path_factory):
+    out = tmp_path_factory.mktemp(request.param)
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", request.param,
+                    "--out", str(out), "--no-git"], check=True)
     return out
 
 
 @pytest.fixture(scope="module")
 def losses(starter):
-    return load(ROOT / "losses.py", "ref_losses"), load(starter / "losses.py", "starter_losses")
+    return load(ROOT / "losses.py", "ref_losses"), load(starter / "losses.py", f"starter_losses_{starter.name}")
 
 
 CORRECTIONS = {
@@ -95,6 +96,12 @@ def test_starter_has_no_centering_option(losses):
     _, new = losses
     import inspect
     assert "score_center" not in inspect.signature(new.loss_fn_rl).parameters
+
+
+def test_sampler_topk_default(starter):
+    cfg = (starter / "train_rl.py").read_text()
+    default = "vocab_logprobs: null" if "no-hint" in starter.name else "vocab_logprobs: 128"
+    assert default in cfg
 
 
 def test_starter_compiles(starter):

@@ -22,7 +22,7 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 ## Générer le starter
 
 ```bash
-python rlenv/sanitize.py          # écrit rlenv/starter/ (git init neuf)
+python rlenv/sanitize.py          # écrit rlenv/starter/{topk-hint,no-hint}/ (git init neuf)
 python -m pytest rlenv/tests      # starter == référence sans score centering
 ```
 
@@ -36,10 +36,14 @@ code original change, le script échoue au lieu de laisser passer la méthode.
 
 ### Décisions ouvertes
 
-- **Top-k de l'échantillonneur conservé** : la distribution top-k est
-  toujours enregistrée (`sampler.vocab_logprobs: 128`) et présente dans le
-  batch, documentée comme une donnée standard. Sans elle, la méthode est
-  infaisable ; avec, c'est un léger indice.
+- **Top-k de l'échantillonneur : deux variantes** (`--variant`, les deux
+  par défaut dans `rlenv/starter/<variante>/`) :
+  - `topk-hint` : enregistré par défaut (k = 128), passé à la loss et
+    documenté comme une donnée standard. Léger indice.
+  - `no-hint` : désactivé par défaut (`sampler.vocab_logprobs: null`), ni
+    passé à la loss ni mentionné hors de l'échantillonneur et de
+    `train_rl.py`. L'agent doit comprendre qu'il en a besoin et l'activer.
+  On commence par `no-hint` ; si le pass@k reste à 0, on passe à `topk-hint`.
 - **`log_mass`** reste dans `losses.py` (utilisée par `is_weight`) avec une
   docstring neutre. Sa forme générale `log(q * w(p/q))` est un indice faible.
 - **`LICENSE`** garde le nom de l'auteur (obligation de la licence MIT).
