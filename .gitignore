@@ -9,3 +9,6 @@ debug.py
 logs
 .venv/
 .pytest_cache/
+
+# rlenv: generated starter tree (rebuilt by rlenv/sanitize.py)
+rlenv/starter/
