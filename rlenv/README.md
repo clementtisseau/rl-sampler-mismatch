@@ -14,7 +14,7 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 |---|---|
 | `sanitize.py` | Génère `starter/` depuis la racine : retire le score centering et les indices qui le trahissent. Déterministe, rejouable. |
 | `starter/` | **Généré, non versionné.** Le dépôt que l'agent reçoit dans son conteneur. |
-| `prompts/L0..L4.md` | Les prompts, du problème seul (L0) à la méthode complète (L4). |
+| `prompts/` | Les prompts : `common.md` (tâche, livrables, faits connus) + niveaux cumulatifs `L2a`, `L2b`, `L3`, `L4`, assemblés par `compose.py`. L0 et L1 sont reportés. |
 | `grader/` | Le correcteur : test théorique, juge LLM, évaluation empirique. |
 | `docker/` | Images `agent` (starter + GPU, sans internet) et `grader`. |
 | `task.py` | *(à venir)* Tâche Inspect AI, paramétrée par `hint_level`. |
