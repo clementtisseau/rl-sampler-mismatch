@@ -27,12 +27,18 @@ génère les starters et construit les images au premier lancement.
 
 ```bash
 inspect eval rlenv/task.py --model <modèle agent> \
-    -T levels=L3,L4 -T experiments=true -T judges=<modèle juge> -T hours=4 -T epochs=5
+    -T levels=L3,L4 -T experiments=true -T hours=2 -T tokens=5000000 -T epochs=3
 ```
 
 - `levels` : parmi `L0,L1,L2a,L2b,L3,L4` (défaut `L2a,L2b,L3,L4`) ;
   `experiments` : `true` (défaut) ou `false`, voir « Expériences prévues » ;
-  `epochs` : tentatives par échantillon (pass@k) ; `hours` : limite de temps.
+  `epochs` : tentatives par niveau (pass@k).
+- Un run s'arrête quand l'agent appelle `submit()` ou atteint une limite :
+  `hours` (temps de travail, défaut 2 ; l'attente de l'API n'est pas comptée,
+  le temps réel est plafonné à 3 fois), `tokens` (total du run, défaut
+  5 000 000 : la borne de coût), `messages` (défaut 500, contre les boucles).
+  `compaction` (défaut `true`) compresse l'historique près de la limite de
+  contexte (compaction native du fournisseur, sinon résumé).
 - `judges` : un ou plusieurs modèles séparés par des virgules (rien = pas de juge).
 - Le code de l'agent ne tourne que dans des conteneurs sans réseau : son bac à
   sable, et l'image du correcteur (`losses.py` monté en lecture seule).
