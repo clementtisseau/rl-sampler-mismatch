@@ -8,11 +8,10 @@ The sampler that generates rollouts can differ from the model being trained:
 Gaussian noise on its weights, int8 or fp8 weights, a quantized KV cache, or
 stale weights (options under `sampler.*` and `dtypes.sampler`). Real
 inference engines differ from trainers in the same way, only less. When the
-two differ, training becomes unstable and often collapses, even with the
-importance-sampling corrections already implemented (`rl.is.*`).
+two differ, training becomes unstable and often collapses.
 
-**Goal: find a modification of the RL loss, grounded in a theoretical
-argument, that makes training stable under such a mismatch.**
+**Goal: find a modification of the RL loss that makes training stable under
+such a mismatch, and explain why it works.**
 
 ## Deliverables
 

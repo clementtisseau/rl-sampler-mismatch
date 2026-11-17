@@ -20,8 +20,8 @@ def compose(level, budget=DEFAULT_BUDGET, experiments=True):
     tools = (HERE / ("tools_experiments.md" if experiments else "tools_no_experiments.md")).read_text().rstrip()
     common = (HERE / "common.md").read_text().replace("{{TOOLS}}", tools).replace("{{BUDGET}}", budget)
     parts = [common.rstrip()]
-    parts += [(HERE / f"{lvl}.md").read_text().rstrip() for lvl in LEVELS[:LEVELS.index(level) + 1]]
-    parts = [p for p in parts if p]  # L0 adds nothing
+    # L0 is common.md alone, so it has no file; each later level adds its own
+    parts += [(HERE / f"{lvl}.md").read_text().rstrip() for lvl in LEVELS[1:LEVELS.index(level) + 1]]
     return "\n\n".join(parts) + "\n"
 
 
