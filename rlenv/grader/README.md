@@ -33,5 +33,15 @@ l'agent dans un arbre propre, puis calcule trois signaux :
     (médiane, majorité).
   Le juge ne voit pas le résultat du test théorique : les signaux restent
   indépendants.
-- `empirical/` : sweeps cachés (dérivés de `sweeps/06b_*.yaml`) et résultats
-  des baselines mis en cache.
+- `empirical/mini_check.py` : garde-fou empirique sur CPU (~1 min 30 avec
+  3 cœurs). Lance le prototype `rlenv/mini` (tri de chiffres, bruit relatif
+  0,3 sur les poids du modèle de génération, avantages ±1, 600 pas) avec la
+  loss soumise sur 3 seeds cachées, puis normalise la récompense finale entre
+  REINFORCE (0) et le score centering (1), mis en cache dans
+  `baselines.json` (`--calibrate` les recalcule). Réussi si ≥ 0,5. Applique
+  la section `## Configuration` de l'agent (`sampler.vocab_logprobs`,
+  `rl.is.*`). Ce signal distingue « corrige la dérive » de « ne corrige
+  rien », **pas** le score centering de TIS/MIS : voir
+  `rlenv/mini/RESULTS.md`.
+- Validation sur Qwen3-0.6B (GPU, plus tard) : sweeps dérivés de
+  `sweeps/06b_*.yaml`, réglages et seeds cachés.

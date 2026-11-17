@@ -169,7 +169,13 @@ def load_losses(path):
 
 def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=8, lr=0.05,
           warm_steps=15, losses_path=ROOT / "losses.py", log_every=10, loss_fn=None, verbose=False,
-          reward_mode="group_centered"):
+          reward_mode="group_centered", vocab_logprobs="full", correction=None):
+    """method: a key of METHODS (reference losses.py with that correction) or
+    "submission": losses_path's loss_fn_rl(hidden, head, batch, correction),
+    with correction built from the rl.is.* dict `correction` (or None).
+    vocab_logprobs: what the sampler records for the loss, as in train_rl.py:
+    None (sampled tokens only), "full", or an int k (top-k head under the
+    starter's names sampler_topk_ids / sampler_topk_logprobs)."""
     losses = load_losses(losses_path)
     key = jax.random.key(seed)
     k_warm, k_noise, key = jax.random.split(key, 3)
@@ -177,7 +183,10 @@ def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=
     delta = jax.tree.map(lambda w, k: noise * jax.random.normal(k, w.shape) * w, params,
                          jax.tree.unflatten(jax.tree.structure(params),
                                             list(jax.random.split(k_noise, len(jax.tree.leaves(params))))))
-    if loss_fn is None:
+    if loss_fn is None and method == "submission":
+        corr = losses.ISCorrection(**correction).check() if correction else None
+        loss_fn = lambda h, hd, b: losses.loss_fn_rl(h, hd, b, corr)
+    elif loss_fn is None:
         cfg, sc = METHODS[method]
         corr = losses.ISCorrection(**cfg).check() if cfg else None
         loss_fn = lambda h, hd, b: losses.loss_fn_rl(h, hd, b, corr, sc)
@@ -200,8 +209,12 @@ def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=
         else:
             raise ValueError(reward_mode)
         mask = completion_mask(B)
-        batch = {"tokens": tokens, "mask": mask, "advantages": adv, "sampling_token_logprobs": tok_lp,
-                 "sampling_vocab_logprobs": vocab_lp}
+        batch = {"tokens": tokens, "mask": mask, "advantages": adv, "sampling_token_logprobs": tok_lp}
+        if vocab_logprobs == "full":
+            batch["sampling_vocab_logprobs"] = vocab_lp
+        elif isinstance(vocab_logprobs, int):
+            top_lp, top_ids = jax.lax.top_k(vocab_lp, min(vocab_logprobs, VOCAB))
+            batch |= {"sampler_topk_ids": top_ids, "sampler_topk_logprobs": top_lp}
 
         def objective(params):
             return loss_fn(forward(params, tokens), lambda x: head(params, x), batch)
