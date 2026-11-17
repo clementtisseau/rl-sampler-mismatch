@@ -38,6 +38,19 @@ inspect eval rlenv/task.py --model <modèle agent> \
 - Réseau qui intercepte TLS : `SC_RLENV_PIPCA=<bundle CA>` pour construire
   les images.
 
+## Expériences prévues
+
+- **Avec ou sans expérimentation.** Comparer, à niveau d'indice égal, un agent
+  qui peut lancer des entraînements (`./run_dev.sh`, configuration actuelle)
+  et un agent qui ne le peut pas (starter sans `run_dev.sh` ni `dev/mini.py`,
+  prompt qui dit qu'aucun entraînement n'est possible). Question : voir le
+  problème en pratique (par exemple la KL entre les deux modèles qui explose
+  sous REINFORCE) aide-t-il à trouver la solution attendue ? Mesure : taux de
+  `rediscovered` / `discovered` du juge et réussite du test théorique, en
+  pass@k par niveau. À implémenter comme un paramètre de la tâche
+  (`experiments=true|false`) qui choisit le starter et la section « Tools » du
+  prompt.
+
 ## Générer le starter
 
 ```bash
