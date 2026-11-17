@@ -107,3 +107,15 @@ def test_sampler_topk_default(starter):
 def test_starter_compiles(starter):
     for f in starter.rglob("*.py"):
         py_compile.compile(str(f), doraise=True)
+
+
+def test_no_experiments_starter(tmp_path):
+    out = tmp_path / "noexp"
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", "no-hint", "--no-experiments",
+                    "--out", str(out), "--no-git"], check=True)
+    assert not (out / "run_dev.sh").exists() and not (out / "dev").exists()
+    assert "run_dev" not in (out / "README.md").read_text()
+    with_exp = tmp_path / "exp"
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", "no-hint",
+                    "--out", str(with_exp), "--no-git"], check=True)
+    assert (out / "losses.py").read_text() == (with_exp / "losses.py").read_text()

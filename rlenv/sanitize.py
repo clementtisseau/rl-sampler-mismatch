@@ -18,8 +18,12 @@ distribution is:
                the loss nor mentioned outside the sampler. The capability stays
                in the sampler, like a `logprobs=k` option of an inference engine.
 
+Independently, --no-experiments leaves out the dev tooling (run_dev.sh,
+dev/), for agents that must not run training.
+
 Usage (from the repository root):
     python rlenv/sanitize.py              # both variants in rlenv/starter/<variant>/, git-inited
+    python rlenv/sanitize.py --no-experiments   # in rlenv/starter/<variant>-noexp/
     python rlenv/sanitize.py --variant no-hint --out DIR --no-git
 """
 import argparse
@@ -313,7 +317,20 @@ def copy_tree(out):
     shutil.copytree(ROOT, out, ignore=ignore)
 
 
-def transform(out, variant):
+README_RUN_DEV = """`./run_dev.sh [key=value ...]` runs a short version of this on one mismatch
+setting and summarizes the reward curves (`DRY_RUN=1` prints the command).
+Without a GPU it runs `dev/mini.py` instead: a tiny transformer learning to
+sort digits, with the same sampler mismatch and the same loss interface,
+in a few minutes on a CPU.
+
+"""
+
+
+def starter_name(variant, experiments=True):
+    return variant if experiments else f"{variant}-noexp"
+
+
+def transform(out, variant, experiments=True):
     files = {}
     for path, *_ in EDITS + SPANS:
         files.setdefault(path, (out / path).read_text())
@@ -323,12 +340,17 @@ def transform(out, variant):
         files[path] = apply_edit(files[path], old, new, path)
     for path, text in files.items():
         (out / path).write_text(text)
-    (out / "README.md").write_text(README)
-    shutil.copytree(EXTRA, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*EXCLUDE_ANY))
-    mini = (HERE / "mini/mini.py").read_text()
-    for old, new in MINI_EDITS:
-        mini = apply_edit(mini, old, new, "dev/mini.py")
-    (out / "dev/mini.py").write_text(mini)
+    if experiments:
+        # dev tooling: run_dev.sh, its summary, and the CPU version of the setup
+        (out / "README.md").write_text(README)
+        shutil.copytree(EXTRA, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*EXCLUDE_ANY))
+        mini = (HERE / "mini/mini.py").read_text()
+        for old, new in MINI_EDITS:
+            mini = apply_edit(mini, old, new, "dev/mini.py")
+        (out / "dev/mini.py").write_text(mini)
+    else:
+        # no way to run training: no dev tooling, and the README does not mention it
+        (out / "README.md").write_text(apply_edit(README, README_RUN_DEV, "", "README.md (no experiments)"))
     if variant == "no-hint":
         for path, old, new in NO_HINT_EDITS:
             (out / path).write_text(apply_edit((out / path).read_text(), old, new, f"{path} (no-hint)"))
@@ -360,31 +382,35 @@ def git_init(out):
     run("commit", "-q", "-m", "Initial commit")
 
 
-def build(variant, out, git=True):
+def build(variant, out, git=True, experiments=True):
     out = out.resolve()
     if out.exists():
         shutil.rmtree(out)
     copy_tree(out)
-    transform(out, variant)
+    transform(out, variant, experiments)
     hits = audit(out)
     if hits:
         raise SystemExit(f"{variant}: audit failed, possible leaks:\n" + "\n".join(hits))
     if git:
         git_init(out)
     n = sum(1 for f in out.rglob("*") if f.is_file() and ".git" not in f.parts)
-    print(f"{variant}: starter written to {out} ({n} files), audit clean")
+    print(f"{starter_name(variant, experiments)}: starter written to {out} ({n} files), audit clean")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--variant", choices=VARIANTS, help="build one variant (default: both)")
-    parser.add_argument("--out", type=Path, help="output dir (requires --variant; default rlenv/starter/<variant>)")
+    parser.add_argument("--out", type=Path, help="output dir (requires --variant; default rlenv/starter/<name>)")
+    parser.add_argument("--no-experiments", action="store_true",
+                        help="starter without run_dev.sh and dev/ (the agent cannot run training)")
     parser.add_argument("--no-git", action="store_true", help="skip git init of the starter")
     args = parser.parse_args()
     if args.out and not args.variant:
         parser.error("--out requires --variant")
     for variant in [args.variant] if args.variant else VARIANTS:
-        build(variant, args.out or HERE / "starter" / variant, git=not args.no_git)
+        experiments = not args.no_experiments
+        out = args.out or HERE / "starter" / starter_name(variant, experiments)
+        build(variant, out, git=not args.no_git, experiments=experiments)
 
 
 if __name__ == "__main__":

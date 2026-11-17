@@ -31,6 +31,7 @@ inspect eval rlenv/task.py --model <modèle agent> \
 ```
 
 - `levels` : `L2a,L2b,L3,L4` ; `variants` : `no-hint`, `topk-hint` ;
+  `experiments` : `true` (défaut) ou `false`, voir « Expériences prévues » ;
   `epochs` : tentatives par échantillon (pass@k) ; `hours` : limite de temps.
 - `judges` : un ou plusieurs modèles séparés par des virgules (rien = pas de juge).
 - Le code de l'agent ne tourne que dans des conteneurs sans réseau : son bac à
@@ -40,16 +41,14 @@ inspect eval rlenv/task.py --model <modèle agent> \
 
 ## Expériences prévues
 
-- **Avec ou sans expérimentation.** Comparer, à niveau d'indice égal, un agent
-  qui peut lancer des entraînements (`./run_dev.sh`, configuration actuelle)
-  et un agent qui ne le peut pas (starter sans `run_dev.sh` ni `dev/mini.py`,
-  prompt qui dit qu'aucun entraînement n'est possible). Question : voir le
+- **Avec ou sans expérimentation** (`-T experiments=true|false`). Comparer, à
+  niveau d'indice égal, un agent qui peut lancer des entraînements
+  (`run_dev.sh`, `dev/mini.py`) et un agent qui ne le peut pas (starter
+  `<variante>-noexp` sans ces outils, prompt qui le dit). Question : voir le
   problème en pratique (par exemple la KL entre les deux modèles qui explose
   sous REINFORCE) aide-t-il à trouver la solution attendue ? Mesure : taux de
   `rediscovered` / `discovered` du juge et réussite du test théorique, en
-  pass@k par niveau. À implémenter comme un paramètre de la tâche
-  (`experiments=true|false`) qui choisit le starter et la section « Tools » du
-  prompt.
+  pass@k par niveau. Le reste du prompt est identique dans les deux cas.
 
 ## Générer le starter
 

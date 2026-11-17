@@ -40,23 +40,14 @@ argument, that makes training stable under such a mismatch.**
      `sampler.kv_quant_bits`, `dtypes.sampler`) are always overridden by the
      evaluation.
 
-## Nature of the task
-
-This is a theoretical problem. What matters is your derivation: what is
-wrong with the current loss, and why your modification fixes it. Tuning
-hyperparameters or chasing better training curves will not help.
-
 ## Tools and budget
 
-- `./run_dev.sh` runs a short training run on one visible mismatch setting
-  and prints the reward curve. Use it to check that your loss runs, produces
-  no NaN and does not break training. You may also use it to observe the
-  problem, but a long series of training runs is unnecessary.
+{{TOOLS}}
 - {{BUDGET}}
 - There is no internet access.
 
 ## Evaluation
 
-Your submission is evaluated mainly on the correctness of the reasoning in
-`REPORT.md` and on whether `losses.py` implements it. A training run under
-hidden mismatch settings also checks that your loss does not break training.
+Your submission is evaluated on the correctness of the reasoning in
+`REPORT.md`, on whether `losses.py` implements it, and on training stability
+under hidden mismatch settings.

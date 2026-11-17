@@ -1,9 +1,10 @@
 # Images
 
-- `Dockerfile.agent-cpu` : bac à sable de l'agent sur CPU. Contient le starter
-  (`ARG VARIANT=no-hint|topk-hint`) et JAX CPU ; `run_dev.sh` y lance
-  `dev/mini.py`. Pas de réseau (`network_mode: none`), 4 CPU, 8 Go.
-  `compose.<variante>.yaml` est le fichier de sandbox donné à Inspect.
+- `Dockerfile.agent-cpu` : bac à sable de l'agent sur CPU. Contient un starter
+  (`ARG STARTER=no-hint|topk-hint|no-hint-noexp|topk-hint-noexp`) et JAX CPU ;
+  avec expérimentation, `run_dev.sh` y lance `dev/mini.py`. La tâche écrit le
+  fichier de sandbox Inspect dans `generated/compose.<starter>.yaml` : pas de
+  réseau, 4 CPU, 8 Go.
 - `Dockerfile.grader` : correcteur sur CPU (test théorique et garde-fou
   empirique). Il exécute le `losses.py` de l'agent, donc il tourne à part,
   sans réseau, avec le fichier monté en lecture seule. Le code de référence
