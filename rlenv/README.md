@@ -15,7 +15,7 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 | `sanitize.py` | Génère `starter/` depuis la racine : retire le score centering et les indices qui le trahissent. Déterministe, rejouable. |
 | `starter/` | **Généré, non versionné.** Le dépôt que l'agent reçoit dans son conteneur. |
 | `starter_extra/` | Ajouté à chaque starter : `run_dev.sh` (run court sur le réglage visible, bruit 0,05 sur les poids, 150 pas) et `dev/summarize.py` (tableau, courbe texte, verdict d'effondrement). |
-| `prompts/` | Les prompts : `common.md` (tâche, livrables, faits connus) + niveaux cumulatifs `L2a`, `L2b`, `L3`, `L4`, assemblés par `compose.py`. L0 et L1 sont reportés. |
+| `prompts/` | Les prompts : `common.md` (tâche, livrables, outils, évaluation) + niveaux cumulatifs, assemblés par `compose.py`. `L0` : rien de plus ; `L1` : ce qu'on savait avant l'article ; `L2a`, `L2b`, `L3`, `L4` : indices de plus en plus précis. Un fichier `tools_*.md` par mode d'expérimentation. |
 | `grader/` | Le correcteur : test théorique, juge LLM, évaluation empirique. |
 | `docker/` | Images `agent` (starter + GPU, sans internet) et `grader`. |
 | `task.py` | Tâche Inspect AI : un échantillon par (variante, niveau), agent `react` (bash, python, éditeur) dans le bac à sable Docker, trois scorers (`theory`, `guard`, `judge`). |
@@ -30,7 +30,7 @@ inspect eval rlenv/task.py --model <modèle agent> \
     -T levels=L3,L4 -T variants=no-hint -T judges=<modèle juge> -T hours=4 -T epochs=5
 ```
 
-- `levels` : `L2a,L2b,L3,L4` ; `variants` : `no-hint`, `topk-hint` ;
+- `levels` : parmi `L0,L1,L2a,L2b,L3,L4` (défaut `L2a,L2b,L3,L4`) ; `variants` : `no-hint`, `topk-hint` ;
   `experiments` : `true` (défaut) ou `false`, voir « Expériences prévues » ;
   `epochs` : tentatives par échantillon (pass@k) ; `hours` : limite de temps.
 - `judges` : un ou plusieurs modèles séparés par des virgules (rien = pas de juge).

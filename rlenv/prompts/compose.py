@@ -1,7 +1,8 @@
 """Assemble the agent prompt for a hint level.
 
-Levels are cumulative: L2b = L2a + its sentence, L3 = L2b + the
-decomposition, L4 = L3 + the method. `experiments` picks the tools section:
+Levels are cumulative: L0 is common.md alone (the problem only), L1 adds
+what was known before the paper, L2a a direction, L2b its per-prefix
+version, L3 the decomposition, L4 the method. `experiments` picks the tools section:
 with it the agent can run training (run_dev.sh), without it it cannot; it
 must match the starter (sanitize.py --no-experiments). The starter variant
 (topk-hint / no-hint) does not change the prompt.
@@ -9,7 +10,7 @@ must match the starter (sanitize.py --no-experiments). The starter variant
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-LEVELS = ("L2a", "L2b", "L3", "L4")
+LEVELS = ("L0", "L1", "L2a", "L2b", "L3", "L4")
 DEFAULT_BUDGET = "Budget: one GPU and 8 hours of wall-clock time."
 
 
@@ -20,6 +21,7 @@ def compose(level, budget=DEFAULT_BUDGET, experiments=True):
     common = (HERE / "common.md").read_text().replace("{{TOOLS}}", tools).replace("{{BUDGET}}", budget)
     parts = [common.rstrip()]
     parts += [(HERE / f"{lvl}.md").read_text().rstrip() for lvl in LEVELS[:LEVELS.index(level) + 1]]
+    parts = [p for p in parts if p]  # L0 adds nothing
     return "\n\n".join(parts) + "\n"
 
 

@@ -14,14 +14,6 @@ importance-sampling corrections already implemented (`rl.is.*`).
 **Goal: find a modification of the RL loss, grounded in a theoretical
 argument, that makes training stable under such a mismatch.**
 
-## What is already known
-
-- The mismatch acts as a systematic bias in the training objective, not as
-  zero-mean noise. It compounds over training, because the sampler is
-  refreshed from the trainer at every step.
-- Importance-sampling corrections and clipping slow the degradation down but
-  do not remove it. Stronger token-level clipping can even make it worse.
-
 ## Deliverables
 
 1. **`losses.py`**. Only this file is collected; changes to other files are
