@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1
+# Agent sandbox, CPU only: the starter repository and what dev/mini.py needs.
+# Build context: rlenv/ (run rlenv/sanitize.py first).
+FROM python:3.12-slim
+# Optional build secret "pipca": a CA bundle for networks that intercept TLS.
+RUN --mount=type=secret,id=pipca,required=false \
+    if [ -f /run/secrets/pipca ]; then export PIP_CERT=/run/secrets/pipca; fi; \
+    pip install --no-cache-dir "jax==0.12.0.1" "jaxlib==0.12.0.1" optax numpy omegaconf
+ARG VARIANT=no-hint
+COPY starter/${VARIANT}/ /workspace/
+WORKDIR /workspace
+ENV DEV_BACKEND=cpu

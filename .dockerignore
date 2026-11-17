@@ -1,0 +1,6 @@
+.git
+rlenv/starter
+assets
+outputs
+wandb
+**/__pycache__

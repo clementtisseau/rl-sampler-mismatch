@@ -18,7 +18,25 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 | `prompts/` | Les prompts : `common.md` (tâche, livrables, faits connus) + niveaux cumulatifs `L2a`, `L2b`, `L3`, `L4`, assemblés par `compose.py`. L0 et L1 sont reportés. |
 | `grader/` | Le correcteur : test théorique, juge LLM, évaluation empirique. |
 | `docker/` | Images `agent` (starter + GPU, sans internet) et `grader`. |
-| `task.py` | *(à venir)* Tâche Inspect AI, paramétrée par `hint_level`. |
+| `task.py` | Tâche Inspect AI : un échantillon par (variante, niveau), agent `react` (bash, python, éditeur) dans le bac à sable Docker, trois scorers (`theory`, `guard`, `judge`). |
+
+## Lancer une évaluation (CPU)
+
+Il faut Docker et `pip install -r rlenv/requirements-host.txt`. La tâche
+génère les starters et construit les images au premier lancement.
+
+```bash
+inspect eval rlenv/task.py --model <modèle agent> \
+    -T levels=L3,L4 -T variants=no-hint -T judges=<modèle juge> -T hours=4 -T epochs=5
+```
+
+- `levels` : `L2a,L2b,L3,L4` ; `variants` : `no-hint`, `topk-hint` ;
+  `epochs` : tentatives par échantillon (pass@k) ; `hours` : limite de temps.
+- `judges` : un ou plusieurs modèles séparés par des virgules (rien = pas de juge).
+- Le code de l'agent ne tourne que dans des conteneurs sans réseau : son bac à
+  sable, et l'image du correcteur (`losses.py` monté en lecture seule).
+- Réseau qui intercepte TLS : `SC_RLENV_PIPCA=<bundle CA>` pour construire
+  les images.
 
 ## Générer le starter
 

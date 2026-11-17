@@ -16,8 +16,8 @@ summarize = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(summarize)
 
 
-def dry_run(*args):
-    env = {**os.environ, "DRY_RUN": "1", "DEV_STEPS": "40"}
+def dry_run(*args, backend="gpu"):
+    env = {**os.environ, "DRY_RUN": "1", "DEV_STEPS": "40", "DEV_BACKEND": backend}
     out = subprocess.run(["bash", str(EXTRA / "run_dev.sh"), *args], env=env, check=True,
                          capture_output=True, text=True).stdout
     return out.split("+ ", 1)[1].split()
@@ -28,6 +28,12 @@ def test_dry_run_command():
     assert cmd[:2] == ["python", "train_rl.py"]
     assert "sampler.weight_noise_scale=0.05" in cmd and "stop.steps=40" in cmd
     assert cmd[-1] == "rl.is.level=token"
+
+
+def test_dry_run_cpu_command():
+    cmd = dry_run("rl.is.level=token", backend="cpu")
+    assert cmd[:2] == ["python", "dev/mini.py"]
+    assert "rl.is.level=token" in cmd and "--steps=40" in cmd
 
 
 def test_later_overrides_win():

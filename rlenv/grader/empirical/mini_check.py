@@ -22,28 +22,16 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 BASELINES = HERE / "baselines.json"
-SETTING = dict(noise=0.3, steps=600, lr=0.2, reward_mode="plus_minus")
+sys.path.insert(0, str(ROOT / "rlenv/mini"))
+from mini import SETTING  # noqa: E402
 SEEDS = (1, 2, 3)          # the agent's dev runs use seed 0
 PASS = 0.5                 # normalized score needed to pass
 
 
 def parse_config(args):
-    vocab, correction = None, {}
-    for arg in args:
-        key, _, value = arg.partition("=")
-        if key == "sampler.vocab_logprobs":
-            vocab = None if value in ("null", "None", "") else value if value == "full" else int(value)
-        elif key.startswith("rl.is."):
-            field = key[len("rl.is."):]
-            if field == "level" and value in ("null", "None"):
-                correction = None
-                continue
-            if correction is None:
-                correction = {}
-            correction[field] = float(value) if field in ("low", "high") else value
-    if correction and "level" not in correction:
-        correction["level"] = "token"
-    return vocab, (correction or None)
+    sys.path.insert(0, str(ROOT / "rlenv/mini"))
+    import mini
+    return mini.parse_config(args)
 
 
 def _run(job):

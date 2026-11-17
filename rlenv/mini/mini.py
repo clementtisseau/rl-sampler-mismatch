@@ -169,7 +169,7 @@ def load_losses(path):
 
 def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=8, lr=0.05,
           warm_steps=15, losses_path=ROOT / "losses.py", log_every=10, loss_fn=None, verbose=False,
-          reward_mode="group_centered", vocab_logprobs="full", correction=None):
+          reward_mode="group_centered", vocab_logprobs=None, correction=None):
     """method: a key of METHODS (reference losses.py with that correction) or
     "submission": losses_path's loss_fn_rl(hidden, head, batch, correction),
     with correction built from the rl.is.* dict `correction` (or None).
@@ -247,14 +247,45 @@ def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=
     return log
 
 
+# Default setting, shared with rlenv/grader/empirical/mini_check.py (which
+# uses other seeds): REINFORCE plateaus here while drift-free losses improve.
+SETTING = dict(noise=0.3, steps=600, lr=0.2, reward_mode="plus_minus")
+
+
+def parse_config(args):
+    """key=value overrides as in train_rl.py: sampler.vocab_logprobs
+    (null | full | k) and rl.is.* (an ISCorrection). Others are ignored."""
+    vocab, correction = None, {}
+    for arg in args:
+        key, _, value = arg.partition("=")
+        if key == "sampler.vocab_logprobs":
+            vocab = None if value in ("null", "None", "") else value if value == "full" else int(value)
+        elif key.startswith("rl.is."):
+            field = key[len("rl.is."):]
+            if field == "level" and value in ("null", "None"):
+                correction = None
+                continue
+            if correction is None:
+                correction = {}
+            correction[field] = float(value) if field in ("low", "high") else value
+    if correction and "level" not in correction:
+        correction["level"] = "token"
+    return vocab, (correction or None)
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--method", default="pg", choices=METHODS)
-    ap.add_argument("--noise", type=float, default=0.1)
+    ap = argparse.ArgumentParser(description="Train with ./losses.py on the CPU setting; key=value overrides.")
+    ap.add_argument("--method", default="submission", choices=[*METHODS, "submission"])
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--steps", type=int, default=300)
-    ap.add_argument("--lr", type=float, default=0.05)
-    args = ap.parse_args()
+    ap.add_argument("--steps", type=int, default=SETTING["steps"])
+    ap.add_argument("--out", type=Path, help="write metrics as JSON lines here")
+    args, overrides = ap.parse_known_args()
+    vocab, correction = parse_config(overrides)
     t0 = time.time()
-    log = train(args.method, args.noise, args.seed, args.steps, lr=args.lr, verbose=True)
+    setting = {**SETTING, "steps": args.steps}
+    log = train(args.method, seed=args.seed, log_every=25, verbose=args.out is None,
+                vocab_logprobs=vocab, correction=correction, **setting)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text("".join(json.dumps(r) + "\n" for r in log))
     print(f"done in {time.time() - t0:.0f}s", file=sys.stderr)

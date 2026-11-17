@@ -199,11 +199,51 @@ python train_rl.py model.source=Qwen/Qwen3-0.6B env.id=countdown \\
 
 `./run_dev.sh [key=value ...]` runs a short version of this on one mismatch
 setting and summarizes the reward curves (`DRY_RUN=1` prints the command).
+Without a GPU it runs `dev/mini.py` instead: a tiny transformer learning to
+sort digits, with the same sampler mismatch and the same loss interface,
+in a few minutes on a CPU.
 
 Defaults live in each trainer; override them with `key=value` arguments. Use
 `log.wandb_mode=disabled` to run without W&B. Configs and metrics go to
 `outputs/`.
 """
+
+# The CPU prototype (rlenv/mini/mini.py) goes to every starter as dev/mini.py,
+# scrubbed like the rest and pointed at the starter's own losses.py.
+MINI_EDITS = [
+    ("""The loss is the
+repository's losses.loss_fn_rl, called with the same batch layout as
+train_rl.py, so any loss written for train_rl.py runs here unchanged.
+
+    python rlenv/mini/mini.py --method pg --noise 0.1 --seed 0
+""", """The loss is
+./losses.py's loss_fn_rl, called with the same batch layout as train_rl.py,
+so any loss written for train_rl.py runs here unchanged.
+
+    python dev/mini.py [key=value ...]     (or ./run_dev.sh without a GPU)
+"""),
+    ("ROOT = Path(__file__).resolve().parents[2]", "ROOT = Path(__file__).resolve().parents[1]"),
+    ("""# Extra tokens that never appear in a correct answer: a long tail of
+# unlikely tokens, as in an LLM vocabulary (env MINI_EXTRA_TOKENS).""",
+     """# Extra tokens that never appear in a correct answer, as the many unlikely
+# tokens of an LLM vocabulary (env MINI_EXTRA_TOKENS)."""),
+    ("""    # name: (ISCorrection kwargs or None, score centering)
+    "pg": (None, False),
+    "tis": (dict(high=2.0, outside="clamp"), False),
+    "mis": (dict(low=0.5, high=5.0), False),
+    "sc": (None, True),
+    "sc+tis": (dict(high=2.0, outside="clamp"), True),
+""", """    # name: (ISCorrection kwargs or None, unused)
+    "pg": (None, False),
+    "tis": (dict(high=2.0, outside="clamp"), False),
+    "mis": (dict(low=0.5, high=5.0), False),
+"""),
+    ("        cfg, sc = METHODS[method]", "        cfg, _ = METHODS[method]"),
+    ("losses.loss_fn_rl(h, hd, b, corr, sc)", "losses.loss_fn_rl(h, hd, b, corr)"),
+    ("""# Default setting, shared with rlenv/grader/empirical/mini_check.py (which
+# uses other seeds): REINFORCE plateaus here while drift-free losses improve.""",
+     """# Default setting (the evaluation uses other seeds)."""),
+]
 
 # Extra edits for the no-hint variant, applied to the topk-hint starter.
 NO_HINT_EDITS = [
@@ -285,6 +325,10 @@ def transform(out, variant):
         (out / path).write_text(text)
     (out / "README.md").write_text(README)
     shutil.copytree(EXTRA, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*EXCLUDE_ANY))
+    mini = (HERE / "mini/mini.py").read_text()
+    for old, new in MINI_EDITS:
+        mini = apply_edit(mini, old, new, "dev/mini.py")
+    (out / "dev/mini.py").write_text(mini)
     if variant == "no-hint":
         for path, old, new in NO_HINT_EDITS:
             (out / path).write_text(apply_edit((out / path).read_text(), old, new, f"{path} (no-hint)"))

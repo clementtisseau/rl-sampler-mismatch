@@ -1,0 +1,203 @@
+"""Inspect AI task: can an agent find score centering from hints?
+
+One sample per (starter variant, hint level). The agent works in a Docker
+sandbox holding the starter repository (no network, CPU only for now) and
+must leave `losses.py` and `REPORT.md` in /workspace. Three scorers:
+
+  theory   exact drift checks on a toy policy (grader/theory/check.py)
+  guard    CPU training run vs REINFORCE / score centering (grader/empirical)
+  judge    LLM judges with the hidden rubric (grader/judge), if models given
+
+The agent's code only ever runs inside containers: its sandbox, and the
+grader image (no network, submission mounted read-only).
+
+    inspect eval rlenv/task.py --model <agent model> \
+        -T levels=L3,L4 -T variants=no-hint -T judges=<judge model> -T hours=4
+"""
+import asyncio
+import difflib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from inspect_ai import Task, task
+from inspect_ai.agent import react
+from inspect_ai.dataset import MemoryDataset, Sample
+from inspect_ai.model import get_model
+from inspect_ai.scorer import Score, Target, mean, scorer
+from inspect_ai.solver import TaskState
+from inspect_ai.tool import bash, python, text_editor
+from inspect_ai.util import sandbox
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / "prompts"))
+sys.path.insert(0, str(HERE / "grader/judge"))
+import compose as prompts  # noqa: E402
+import judge as judge_lib  # noqa: E402
+import sanitize  # noqa: E402
+
+GRADER_IMAGE = "sc-rlenv-grader"
+AGENT_IMAGE = "sc-rlenv-agent-cpu:{variant}"
+WORKSPACE = "/workspace"
+CPU_BUDGET = ("Budget: {cpus} CPU cores, no GPU, and {hours:g} hours of wall-clock time, including "
+              "your training runs. Without a GPU, ./run_dev.sh runs the CPU version (dev/mini.py), "
+              "which takes a few minutes per run.")
+
+
+# ------------------------------------------------------------------ images
+def _docker_build(tag, dockerfile, context, args=()):
+    cmd = ["docker", "build", "-q", "-t", tag, "-f", str(dockerfile), *args]
+    ca = os.environ.get("SC_RLENV_PIPCA")  # optional CA bundle for TLS-intercepting networks
+    if ca:
+        cmd += ["--secret", f"id=pipca,src={ca}"]
+    subprocess.run([*cmd, str(context)], check=True, capture_output=True)
+
+
+def prepare(variants, rebuild=False):
+    """Generate the starters and build the images they need."""
+    for variant in variants:
+        sanitize.build(variant, HERE / "starter" / variant)
+    have = lambda tag: subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0
+    if rebuild or not have(GRADER_IMAGE):
+        _docker_build(GRADER_IMAGE, HERE / "docker/Dockerfile.grader", ROOT)
+    for variant in variants:
+        tag = AGENT_IMAGE.format(variant=variant)
+        if rebuild or not have(tag):
+            _docker_build(tag, HERE / "docker/Dockerfile.agent-cpu", HERE, ["--build-arg", f"VARIANT={variant}"])
+
+
+# ------------------------------------------------------------------ submission
+async def read_submission(state):
+    """losses.py, REPORT.md (empty if missing) and the diff against the starter."""
+    sb = sandbox()
+    async def read(name):
+        try:
+            return await sb.read_file(f"{WORKSPACE}/{name}")
+        except Exception:
+            return ""
+    losses, report = await read("losses.py"), await read("REPORT.md")
+    original = (HERE / "starter" / state.metadata["variant"] / "losses.py").read_text()
+    diff = "".join(difflib.unified_diff(original.splitlines(True), losses.splitlines(True),
+                                        "a/losses.py", "b/losses.py"))
+    return losses, report, diff
+
+
+def configuration(report):
+    """key=value lines of the report's `## Configuration` section."""
+    m = re.search(r"^##\s*Configuration\s*$(.*?)(?=^##\s|\Z)", report, re.M | re.S)
+    if not m:
+        return []
+    lines = [l.strip().strip("`").strip() for l in m.group(1).splitlines()]
+    return [l for l in lines if re.fullmatch(r"(rl\.is\.\w+|sampler\.\w+)=\S+", l)]
+
+
+async def run_grader(losses, args, timeout):
+    """Run a grader script on the submitted losses.py in the grader image."""
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "losses.py").write_text(losses)
+        os.chmod(tmp, 0o755)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "run", "--rm", "--network", "none", "--cpus", "4", "-v", f"{tmp}:/sub:ro",
+            GRADER_IMAGE, "python", "-I", *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"passed": False, "error": f"grader timed out after {timeout}s"}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"passed": False, "error": (err or out).decode(errors="replace")[-1500:]}
+
+
+# ------------------------------------------------------------------ scorers
+@scorer(metrics=[mean()])
+def theory():
+    async def score(state: TaskState, target: Target):
+        losses, _, _ = await read_submission(state)
+        if not losses:
+            return Score(value=0, explanation="no losses.py")
+        result = await run_grader(losses, ["rlenv/grader/theory/check.py", "/sub/losses.py"], 900)
+        return Score(value=int(bool(result.get("passed"))), explanation=json.dumps(result)[:4000], metadata=result)
+    return score
+
+
+@scorer(metrics=[mean()])
+def guard():
+    async def score(state: TaskState, target: Target):
+        losses, report, _ = await read_submission(state)
+        if not losses:
+            return Score(value=0, explanation="no losses.py")
+        config = configuration(report)
+        result = await run_grader(losses, ["rlenv/grader/empirical/mini_check.py", "/sub/losses.py", *config], 3600)
+        result["configuration"] = config
+        return Score(value=int(bool(result.get("passed"))), explanation=json.dumps(result)[:4000], metadata=result)
+    return score
+
+
+def parse_verdict(text):
+    text = text.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    if fenced:
+        text = fenced.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    return json.loads(text[start:end + 1])
+
+
+@scorer(metrics={"score": [mean()], "rediscovered": [mean()], "discovered": [mean()]})
+def judge(models):
+    async def score(state: TaskState, target: Target):
+        losses, report, diff = await read_submission(state)
+        prompt = judge_lib.build_prompt(state.metadata["prompt"], report or "(no REPORT.md)", diff or "(no change)")
+        verdicts, errors = [], []
+        for name in models:
+            try:
+                out = await get_model(name).generate(prompt)
+                verdict = parse_verdict(out.completion)
+                judge_lib.score(verdict)  # validates
+                verdicts.append(verdict)
+            except Exception as e:
+                errors.append(f"{name}: {type(e).__name__}: {e}"[:300])
+        if not verdicts:
+            return Score(value={"score": 0, "rediscovered": 0, "discovered": 0},
+                         explanation="no valid judge verdict: " + "; ".join(errors))
+        agg = judge_lib.aggregate(verdicts)
+        return Score(value={"score": agg["score"], "rediscovered": int(agg["rediscovered"]),
+                            "discovered": int(agg["discovered"])},
+                     explanation=json.dumps({k: v for k, v in agg.items() if k != "judges"}),
+                     metadata={"aggregate": agg, "verdicts": verdicts, "errors": errors})
+    return score
+
+
+# ------------------------------------------------------------------ task
+@task
+def score_centering(levels="L2a,L2b,L3,L4", variants="no-hint", judges="", hours=8.0, cpus=4,
+                    message_limit=None, epochs=1, rebuild=False):
+    levels = [l.strip() for l in str(levels).split(",") if l.strip()]
+    variants = [v.strip() for v in str(variants).split(",") if v.strip()]
+    judges = [j.strip() for j in str(judges).split(",") if j.strip()]
+    prepare(variants, rebuild=bool(rebuild))
+    budget = CPU_BUDGET.format(cpus=cpus, hours=float(hours))
+    samples = []
+    for variant in variants:
+        for level in levels:
+            text = prompts.compose(level, budget)
+            samples.append(Sample(id=f"{variant}-{level}", input=text,
+                                  metadata={"level": level, "variant": variant, "prompt": text},
+                                  sandbox=("docker", str(HERE / f"docker/compose.{variant}.yaml"))))
+    scorers = [theory(), guard()] + ([judge(judges)] if judges else [])
+    agent = react(
+        prompt=("You are a machine learning researcher. Work in /workspace with the tools you have. "
+                "When losses.py and REPORT.md are final, call submit() with a one-line summary."),
+        tools=[bash(timeout=3600), python(timeout=3600), text_editor()],
+    )
+    return Task(dataset=MemoryDataset(samples), solver=agent, scorer=scorers, epochs=int(epochs),
+                time_limit=int(float(hours) * 3600),
+                message_limit=int(message_limit) if message_limit else None)

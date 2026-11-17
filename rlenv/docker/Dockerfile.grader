@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1
+# Grader, CPU only: runs agent-written losses.py, so it is kept apart from the
+# host and from the agent (run with --network none). Build context: repo root.
+FROM python:3.12-slim
+# Optional build secret "pipca": a CA bundle for networks that intercept TLS.
+RUN --mount=type=secret,id=pipca,required=false \
+    if [ -f /run/secrets/pipca ]; then export PIP_CERT=/run/secrets/pipca; fi; \
+    pip install --no-cache-dir "jax==0.12.0.1" "jaxlib==0.12.0.1" optax numpy
+WORKDIR /grader
+COPY losses.py ./losses.py
+COPY rlenv/grader ./rlenv/grader
+COPY rlenv/mini ./rlenv/mini
