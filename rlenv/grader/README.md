@@ -43,5 +43,10 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   `rl.is.*`). Ce signal distingue « corrige la dérive » de « ne corrige
   rien », **pas** le score centering de TIS/MIS : voir
   `rlenv/mini/RESULTS.md`.
+  Validation (moyenne des 3 seeds → score normalisé) : starter sans
+  correction 0,67 → 0,00 ❌ ; starter + TIS 0,79 → 0,79 ✅ ; score centering
+  (distribution complète) 0,83 → 1,00 ✅ ; score centering top-4 (sur 12
+  tokens) 0,77 → 0,66 ✅ ; loss nulle 0,52 → −0,89 ❌. Rejouer :
+  `RUN_SLOW=1 python -m pytest rlenv/tests/test_guard.py` (~7 min).
 - Validation sur Qwen3-0.6B (GPU, plus tard) : sweeps dérivés de
   `sweeps/06b_*.yaml`, réglages et seeds cachés.
