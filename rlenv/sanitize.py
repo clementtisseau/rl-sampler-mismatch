@@ -35,6 +35,8 @@ HERE = Path(__file__).resolve().parent
 # Top-level entries never copied: the environment itself, VCS state, and files
 # that describe or test the method (README, figure, sweeps, drift test).
 EXCLUDE_TOP = {".git", "rlenv", "README.md", "assets", "sweeps", "tests"}
+# Files added to every starter (dev tooling for the agent), copied as is.
+EXTRA = HERE / "starter_extra"
 EXCLUDE_ANY = {"__pycache__", ".pytest_cache", ".ipynb_checkpoints", ".DS_Store", "outputs", "wandb", ".venv"}
 
 
@@ -195,6 +197,9 @@ python train_rl.py model.source=Qwen/Qwen3-0.6B env.id=countdown \\
   sampler.weight_noise_scale=0.05 rl.is.level=token rl.is.high=2.0 rl.is.outside=clamp
 ```
 
+`./run_dev.sh [key=value ...]` runs a short version of this on one mismatch
+setting and summarizes the reward curves (`DRY_RUN=1` prints the command).
+
 Defaults live in each trainer; override them with `key=value` arguments. Use
 `log.wandb_mode=disabled` to run without W&B. Configs and metrics go to
 `outputs/`.
@@ -233,7 +238,7 @@ VARIANTS = ("topk-hint", "no-hint")
 # license requires keeping its copyright notice).
 AUDIT = [r"cent(er|re|ering|ring)", r"drift", r"2609\.20807", r"marek", r"ryabinin", r"\brho\b",
          r"\bsc\b", r"kl_head", r"E_p\[", r"\btail\b", r"score.?cent", r"bias.?correct"]
-ALLOW = [r"group[_ -]centered", r"group mean", r"center\(\)"]
+ALLOW = [r"group[_ -]centered", r"group mean", r"center\(\)", r"^\s*tail -n "]
 AUDIT_EXEMPT = {"LICENSE"}
 
 
@@ -279,6 +284,7 @@ def transform(out, variant):
     for path, text in files.items():
         (out / path).write_text(text)
     (out / "README.md").write_text(README)
+    shutil.copytree(EXTRA, out, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*EXCLUDE_ANY))
     if variant == "no-hint":
         for path, old, new in NO_HINT_EDITS:
             (out / path).write_text(apply_edit((out / path).read_text(), old, new, f"{path} (no-hint)"))
