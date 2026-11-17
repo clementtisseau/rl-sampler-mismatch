@@ -9,6 +9,10 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   (distribution complète de l'échantillonneur, ou top-k avec une queue
   proportionnelle à p) ; il faut tout réussir dans au moins un scénario :
   - `no_drift` : avec un avantage constant, la mise à jour attendue sous q est nulle ;
+  - `no_drift_prefix` : avec un avantage de moyenne nulle sous q mais qui
+    dépend des d premiers tokens, la mise à jour de chaque position après d
+    est nulle. Rejette une baseline globale exacte (GRPO poussé à la limite),
+    qui annule la dérive moyenne mais pas celle de chaque préfixe ;
   - `on_policy` : si q = p, la mise à jour attendue est celle de REINFORCE ;
   - `bounded` : sous fort décalage, aucun gradient individuel ne dépasse
     10 fois le pire de REINFORCE (exclut l'IS non tronqué).

@@ -10,6 +10,13 @@ loss_fn_rl(hidden, head, batch), with the batch layout train_rl.py builds.
 Checks (all must pass):
   no_drift      With a constant advantage, the expected update under q is zero.
                 Plain REINFORCE fails: E_q[grad log p] != 0 when q != p.
+  no_drift_prefix
+                With an advantage that has zero mean under q but depends on the
+                first d tokens, the expected update of every position after d
+                is zero (there the advantage is a constant of the prefix, so
+                any update is drift). Catches fixes that only center the
+                reward globally (an exact GRPO-style baseline): they cancel
+                the average drift, not the drift at each prefix.
   on_policy     When q = p, the expected update equals plain REINFORCE's.
                 Rules out losses that are drift-free by learning nothing.
   bounded       Under a severe mismatch, no single sample's gradient is more
@@ -64,6 +71,7 @@ def prefixes():
 
 PREFIX_ID = prefixes()
 D = len(PREFIX_ID)
+PREFIX_LEN = np.array([len(p) for p in PREFIX_ID])  # row of theta -> prefix length
 COMPLETIONS = np.array(list(itertools.product(range(V), repeat=L)), np.int32)  # [N, L]
 N = len(COMPLETIONS)
 BOS = 0
@@ -181,7 +189,7 @@ def rewards(key):
 
 
 def run_checks(loss_fn, scenario):
-    res = {"no_drift": [], "on_policy": [], "bounded": [], "alignment": []}
+    res = {"no_drift": [], "no_drift_prefix": [], "on_policy": [], "bounded": [], "alignment": []}
     for seed in SEEDS:
         k_theta, k_mild, k_severe, k_r = jax.random.split(jax.random.key(seed), 4)
         theta = jax.random.normal(k_theta, (D, V))
@@ -194,6 +202,19 @@ def run_checks(loss_fn, scenario):
             g = per_sample_grads(loss_fn, case, jnp.full(N, a))
             scale = expected(jnp.sqrt((g ** 2).sum((1, 2)))[:, None, None] * jnp.ones_like(g), w)[0, 0]
             res["no_drift"].append(float(jnp.linalg.norm(expected(g, w)) / jnp.maximum(scale, 1e-12)))
+
+        # no_drift_prefix: advantage g(y_1..y_d) centered under q; rows of
+        # theta for prefixes of length >= d are only touched after position d
+        for depth in (1, 2):
+            k_g = jax.random.fold_in(k_r, depth)
+            table = jax.random.normal(k_g, (V,) * depth)
+            g_adv = table[tuple(COMPLETIONS[:, i] for i in range(depth))]
+            g_adv = g_adv - (w * g_adv).sum() / w.sum()
+            g = per_sample_grads(loss_fn, case, g_adv)
+            rows = jnp.asarray(PREFIX_LEN >= depth)
+            g = jnp.where(rows[None, :, None], g, 0.0)
+            scale = (w * jnp.sqrt((g ** 2).sum((1, 2)))).sum()
+            res["no_drift_prefix"].append(float(jnp.linalg.norm(expected(g, w)) / jnp.maximum(scale, 1e-12)))
 
         # alignment: non-constant rewards, mild mismatch, against the true gradient
         g = expected(per_sample_grads(loss_fn, case, r), w)
@@ -215,6 +236,7 @@ def run_checks(loss_fn, scenario):
 
     passed = {
         "no_drift": max(res["no_drift"]) < DRIFT_TOL,
+        "no_drift_prefix": max(res["no_drift_prefix"]) < DRIFT_TOL,
         "on_policy": max(res["on_policy"]) < ON_POLICY_TOL,
         "bounded": max(res["bounded"]) < BOUND_FACTOR,
     }

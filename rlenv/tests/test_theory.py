@@ -36,6 +36,32 @@ def reference(correction=None, sc=False):
 
 TIS, MIS = C(high=2.0, outside="clamp"), C(low=0.5, high=5.0)
 
+
+class ExactGlobalBaseline:
+    """GRPO taken to its limit: REINFORCE with the advantage centered by its
+    exact mean under the sampler. A real loss cannot know that mean from one
+    sample, so this oracle reads it from the check's batch builder."""
+
+    def __init__(self):
+        self.mean = None
+
+    def __enter__(self):
+        self.make_batch = check.make_batch
+
+        def make_batch(case, advantages):
+            w = check.q_weights(case)
+            self.mean = (w * advantages).sum() / w.sum()
+            return self.make_batch(case, advantages)
+
+        check.make_batch = make_batch
+        return self
+
+    def __exit__(self, *exc):
+        check.make_batch = self.make_batch
+
+    def __call__(self, hidden, head, batch):
+        return check.reinforce(hidden, head, batch | {"advantages": batch["advantages"] - self.mean})
+
 # name: (loss, expected pass, check that must fail if not passing)
 SUBMISSIONS = {
     "score_centering": (reference(None, True), True, None),
@@ -46,12 +72,20 @@ SUBMISSIONS = {
     "mis": (reference(MIS), False, "no_drift"),
     "naive_is": (reference(C()), False, "bounded"),
     "zero_loss": (lambda h, head, b: (0.0 * head(h).sum(), {}), False, "on_policy"),
+    "exact_global_baseline": (None, False, "no_drift_prefix"),
 }
+
+
+def evaluate(name):
+    if name == "exact_global_baseline":
+        with ExactGlobalBaseline() as loss:
+            return check.evaluate(loss)
+    return check.evaluate(SUBMISSIONS[name][0])
 
 
 @pytest.fixture(scope="module")
 def results():
-    return {name: check.evaluate(loss) for name, (loss, *_) in SUBMISSIONS.items()}
+    return {name: evaluate(name) for name in SUBMISSIONS}
 
 
 @pytest.mark.parametrize("name", SUBMISSIONS)
@@ -65,6 +99,14 @@ def test_verdict(results, name):
         assert s["passed"] == should_pass, (scenario, s)
         if failing:
             assert not s["checks"][failing], (scenario, s)
+
+
+def test_global_baseline_cancels_average_drift_only(results):
+    """It passes the constant-advantage drift check: only the prefix-level
+    check tells it apart from score centering."""
+    for s in results["exact_global_baseline"]["scenarios"].values():
+        assert s["checks"]["no_drift"] and s["checks"]["on_policy"] and s["checks"]["bounded"]
+        assert not s["checks"]["no_drift_prefix"]
 
 
 def test_starter_loss_fails(tmp_path):
