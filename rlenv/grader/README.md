@@ -19,6 +19,19 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   `alignment` (cosinus avec le vrai gradient on-policy) est rapporté sans seuil.
   Usage : `python rlenv/grader/theory/check.py chemin/losses.py` (JSON, code
   de sortie 0 si réussi). Validé par `rlenv/tests/test_theory.py`.
-- `judge/` : grille cachée et prompt du juge LLM, explication de référence.
+- `judge/` : juge LLM (aucun appel de modèle ici).
+  - `reference.md` : explication de référence de la contribution.
+  - `rubric.md` : grille cachée, 6 critères notés 0/1/2 et pondérés (la
+    décomposition par préfixe et la correction du score pèsent 3 chacune),
+    7 quasi-solutions (N1 : décomposition par séquence → baseline façon GRPO,
+    N2 : espérance sous p, etc.), cas « autre contribution valide » → relecture
+    humaine, règles anti-manipulation.
+  - `prompt.md` + `schema.json` : prompt du juge et format JSON de sortie.
+  - `judge.py` : remplit le prompt, valide un verdict, calcule le score pondéré
+    et les drapeaux `rediscovered` / `discovered` (ce dernier exclut ce qui
+    était déjà donné dans le prompt de l'agent), agrège plusieurs juges
+    (médiane, majorité).
+  Le juge ne voit pas le résultat du test théorique : les signaux restent
+  indépendants.
 - `empirical/` : sweeps cachés (dérivés de `sweeps/06b_*.yaml`) et résultats
   des baselines mis en cache.

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Judge verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["criteria", "near_miss", "alternative_contribution", "summary"],
+  "properties": {
+    "criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["C1", "C2", "C3", "C4", "C5", "C6"],
+      "properties": {
+        "C1": {"$ref": "#/$defs/criterion"},
+        "C2": {"$ref": "#/$defs/criterion"},
+        "C3": {"$ref": "#/$defs/criterion"},
+        "C4": {"$ref": "#/$defs/criterion"},
+        "C5": {"$ref": "#/$defs/criterion"},
+        "C6": {"$ref": "#/$defs/criterion"}
+      }
+    },
+    "near_miss": {
+      "description": "Near-miss id from the rubric (N1..N7), or null",
+      "type": ["string", "null"],
+      "enum": ["N1", "N2", "N3", "N4", "N5", "N6", "N7", null]
+    },
+    "alternative_contribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present", "description"],
+      "properties": {
+        "present": {"type": "boolean"},
+        "description": {"type": "string"}
+      }
+    },
+    "summary": {"type": "string", "description": "Two to four sentences"}
+  },
+  "$defs": {
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "given_in_prompt", "evidence", "reasoning"],
+      "properties": {
+        "score": {"type": "integer", "enum": [0, 1, 2]},
+        "given_in_prompt": {"type": "boolean"},
+        "evidence": {"type": "string", "description": "Quote or location in the report or diff"},
+        "reasoning": {"type": "string"}
+      }
+    }
+  }
+}
