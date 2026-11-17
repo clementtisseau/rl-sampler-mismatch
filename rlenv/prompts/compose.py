@@ -2,10 +2,10 @@
 
 Levels are cumulative: L0 is common.md alone (the problem only), L1 adds
 what was known before the paper, L2a a direction, L2b its per-prefix
-version, L3 the decomposition, L4 the method. `experiments` picks the tools section:
+version, L3 the decomposition and where the sampler's distribution can be
+found, L4 the method. `experiments` picks the tools section:
 with it the agent can run training (run_dev.sh), without it it cannot; it
-must match the starter (sanitize.py --no-experiments). The starter variant
-(topk-hint / no-hint) does not change the prompt.
+must match the starter (sanitize.py --no-experiments).
 """
 from pathlib import Path
 

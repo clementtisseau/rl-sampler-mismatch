@@ -26,11 +26,10 @@ def load(path, name):
     return module
 
 
-@pytest.fixture(scope="module", params=["topk-hint", "no-hint"])
-def starter(request, tmp_path_factory):
-    out = tmp_path_factory.mktemp(request.param)
-    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", request.param,
-                    "--out", str(out), "--no-git"], check=True)
+@pytest.fixture(scope="module")
+def starter(tmp_path_factory):
+    out = tmp_path_factory.mktemp("exp")
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--out", str(out), "--no-git"], check=True)
     return out
 
 
@@ -100,8 +99,7 @@ def test_starter_has_no_centering_option(losses):
 
 def test_sampler_topk_default(starter):
     cfg = (starter / "train_rl.py").read_text()
-    default = "vocab_logprobs: null" if "no-hint" in starter.name else "vocab_logprobs: 128"
-    assert default in cfg
+    assert "vocab_logprobs: null" in cfg  # revealed by the prompt from L3, not by the starter
 
 
 def test_starter_compiles(starter):
@@ -111,11 +109,11 @@ def test_starter_compiles(starter):
 
 def test_no_experiments_starter(tmp_path):
     out = tmp_path / "noexp"
-    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", "no-hint", "--no-experiments",
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--no-experiments",
                     "--out", str(out), "--no-git"], check=True)
     assert not (out / "run_dev.sh").exists() and not (out / "dev").exists()
     assert "run_dev" not in (out / "README.md").read_text()
     with_exp = tmp_path / "exp"
-    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", "no-hint",
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"),
                     "--out", str(with_exp), "--no-git"], check=True)
     assert (out / "losses.py").read_text() == (with_exp / "losses.py").read_text()

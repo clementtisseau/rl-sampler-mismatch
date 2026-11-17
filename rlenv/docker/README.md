@@ -1,7 +1,7 @@
 # Images
 
 - `Dockerfile.agent-cpu` : bac à sable de l'agent sur CPU. Contient un starter
-  (`ARG STARTER=no-hint|topk-hint|no-hint-noexp|topk-hint-noexp`) et JAX CPU ;
+  (`ARG STARTER=exp|noexp`) et JAX CPU ;
   avec expérimentation, `run_dev.sh` y lance `dev/mini.py`. La tâche écrit le
   fichier de sandbox Inspect dans `generated/compose.<starter>.yaml` : pas de
   réseau, 4 CPU, 8 Go.

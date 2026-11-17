@@ -16,7 +16,8 @@ FIRST_ALLOWED = {
     r"systematic bias|What is already known": "L1",
     r"\bprefix": "L2b",
     r"s_bar|drift|Cov_q": "L3",
-    r"sg\[|stop-gradient|vocab_logprobs|top-k|sampler_topk|rho": "L4",
+    r"vocab_logprobs|sampler_topk": "L3",
+    r"sg\[|stop-gradient|\brho\b": "L4",
 }
 
 

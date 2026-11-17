@@ -13,12 +13,12 @@ Tout ce qui concerne l'environnement vit dans `rlenv/`.
 | Chemin | Rôle |
 |---|---|
 | `sanitize.py` | Génère `starter/` depuis la racine : retire le score centering et les indices qui le trahissent. Déterministe, rejouable. |
-| `starter/` | **Généré, non versionné.** Le dépôt que l'agent reçoit dans son conteneur. |
+| `starter/` | **Généré, non versionné.** Le dépôt que l'agent reçoit dans son conteneur : `exp/` (avec outils d'entraînement) ou `noexp/` (sans). |
 | `starter_extra/` | Ajouté à chaque starter : `run_dev.sh` (run court sur le réglage visible, bruit 0,05 sur les poids, 150 pas) et `dev/summarize.py` (tableau, courbe texte, verdict d'effondrement). |
-| `prompts/` | Les prompts : `common.md` (tâche, livrables, outils, évaluation) + niveaux cumulatifs, assemblés par `compose.py`. `L0` : rien de plus ; `L1` : ce qu'on savait avant l'article ; `L2a`, `L2b`, `L3`, `L4` : indices de plus en plus précis. Un fichier `tools_*.md` par mode d'expérimentation. |
+| `prompts/` | Les prompts : `common.md` (tâche, livrables, outils, évaluation) + niveaux cumulatifs, assemblés par `compose.py`. `L0` : rien de plus ; `L1` : ce qu'on savait avant l'article ; `L2a`, `L2b` : une direction d'analyse ; `L3` : la décomposition et où trouver la distribution de l'échantillonneur ; `L4` : la méthode. Un fichier `tools_*.md` par mode d'expérimentation. |
 | `grader/` | Le correcteur : test théorique, juge LLM, évaluation empirique. |
 | `docker/` | Images `agent` (starter + GPU, sans internet) et `grader`. |
-| `task.py` | Tâche Inspect AI : un échantillon par (variante, niveau), agent `react` (bash, python, éditeur) dans le bac à sable Docker, trois scorers (`theory`, `guard`, `judge`). |
+| `task.py` | Tâche Inspect AI : un échantillon par niveau, agent `react` (bash, python, éditeur) dans le bac à sable Docker, trois scorers (`theory`, `guard`, `judge`). |
 
 ## Lancer une évaluation (CPU)
 
@@ -27,10 +27,10 @@ génère les starters et construit les images au premier lancement.
 
 ```bash
 inspect eval rlenv/task.py --model <modèle agent> \
-    -T levels=L3,L4 -T variants=no-hint -T judges=<modèle juge> -T hours=4 -T epochs=5
+    -T levels=L3,L4 -T experiments=true -T judges=<modèle juge> -T hours=4 -T epochs=5
 ```
 
-- `levels` : parmi `L0,L1,L2a,L2b,L3,L4` (défaut `L2a,L2b,L3,L4`) ; `variants` : `no-hint`, `topk-hint` ;
+- `levels` : parmi `L0,L1,L2a,L2b,L3,L4` (défaut `L2a,L2b,L3,L4`) ;
   `experiments` : `true` (défaut) ou `false`, voir « Expériences prévues » ;
   `epochs` : tentatives par échantillon (pass@k) ; `hours` : limite de temps.
 - `judges` : un ou plusieurs modèles séparés par des virgules (rien = pas de juge).
@@ -44,7 +44,7 @@ inspect eval rlenv/task.py --model <modèle agent> \
 - **Avec ou sans expérimentation** (`-T experiments=true|false`). Comparer, à
   niveau d'indice égal, un agent qui peut lancer des entraînements
   (`run_dev.sh`, `dev/mini.py`) et un agent qui ne le peut pas (starter
-  `<variante>-noexp` sans ces outils, prompt qui le dit). Question : voir le
+  `noexp` sans ces outils, prompt qui le dit). Question : voir le
   problème en pratique (par exemple la KL entre les deux modèles qui explose
   sous REINFORCE) aide-t-il à trouver la solution attendue ? Mesure : taux de
   `rediscovered` / `discovered` du juge et réussite du test théorique, en
@@ -53,7 +53,8 @@ inspect eval rlenv/task.py --model <modèle agent> \
 ## Générer le starter
 
 ```bash
-python rlenv/sanitize.py          # écrit rlenv/starter/{topk-hint,no-hint}/ (git init neuf)
+python rlenv/sanitize.py                    # écrit rlenv/starter/exp/ (git init neuf)
+python rlenv/sanitize.py --no-experiments   # écrit rlenv/starter/noexp/
 python -m pytest rlenv/tests      # starter == référence sans score centering
 ```
 
@@ -67,14 +68,11 @@ code original change, le script échoue au lieu de laisser passer la méthode.
 
 ### Décisions ouvertes
 
-- **Top-k de l'échantillonneur : deux variantes** (`--variant`, les deux
-  par défaut dans `rlenv/starter/<variante>/`) :
-  - `topk-hint` : enregistré par défaut (k = 128), passé à la loss et
-    documenté comme une donnée standard. Léger indice.
-  - `no-hint` : désactivé par défaut (`sampler.vocab_logprobs: null`), ni
-    passé à la loss ni mentionné hors de l'échantillonneur et de
-    `train_rl.py`. L'agent doit comprendre qu'il en a besoin et l'activer.
-  On commence par `no-hint` ; si le pass@k reste à 0, on passe à `topk-hint`.
+- **Distribution de l'échantillonneur cachée dans le starter** : désactivée
+  par défaut (`sampler.vocab_logprobs: null`), ni passée à la loss ni
+  mentionnée hors de l'échantillonneur et de `train_rl.py`. Le prompt la
+  révèle à partir de **L3**, avec la formule de s̄ qui en a besoin : c'est un
+  indice de l'échelle des niveaux, pas une variante du starter.
 - **`log_mass`** reste dans `losses.py` (utilisée par `is_weight`) avec une
   docstring neutre. Sa forme générale `log(q * w(p/q))` est un indice faible.
 - **`LICENSE`** garde le nom de l'auteur (obligation de la licence MIT).

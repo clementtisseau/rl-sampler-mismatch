@@ -110,12 +110,11 @@ def test_global_baseline_cancels_average_drift_only(results):
 
 
 def test_starter_loss_fails(tmp_path):
-    """The loss the agent starts from (both variants) fails on drift."""
+    """The loss the agent starts from fails on drift."""
     import subprocess, sys
-    for variant in ("topk-hint", "no-hint"):
-        out = tmp_path / variant
-        subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", variant,
-                        "--out", str(out), "--no-git"], check=True)
+    for out in (tmp_path / "starter",):
+        subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--out", str(out), "--no-git"],
+                       check=True)
         r = check.evaluate(check.load_loss(out / "losses.py"))
         assert not r["passed"]
         assert all(not s["checks"]["no_drift"] for s in r["scenarios"].values())

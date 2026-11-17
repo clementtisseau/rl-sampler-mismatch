@@ -18,7 +18,7 @@ spec.loader.exec_module(mini_check)
 @pytest.fixture(scope="module")
 def subs(tmp_path_factory):
     d = tmp_path_factory.mktemp("subs")
-    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"), "--variant", "topk-hint",
+    subprocess.run([sys.executable, str(ROOT / "rlenv/sanitize.py"),
                     "--out", str(d / "starter"), "--no-git"], check=True)
     sc = (ROOT / "losses.py").read_text().replace("score_center=False", "score_center=True")
     sc = sc.replace('"center_ids"', '"sampler_topk_ids"').replace('"center_logprobs"', '"sampler_topk_logprobs"')

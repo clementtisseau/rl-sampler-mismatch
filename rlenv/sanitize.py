@@ -10,21 +10,19 @@ makes this script fail loudly instead of silently leaving the method in.
 After building, an audit greps the starter for words that would give the
 method away and fails on any hit outside a short allowlist.
 
-Two variants differ only in how visible the sampler's next-token
-distribution is:
-    topk-hint: recorded by default (top-k, k=128), passed in the loss batch and
-               documented in the loss docstring and README.
-    no-hint:   off by default (sampler.vocab_logprobs: null), never passed to
-               the loss nor mentioned outside the sampler. The capability stays
-               in the sampler, like a `logprobs=k` option of an inference engine.
+The sampler's next-token distribution is off by default
+(sampler.vocab_logprobs: null), never passed to the loss and not mentioned
+outside the sampler: the capability stays, like a `logprobs=k` option of an
+inference engine. Telling the agent about it is a hint of the prompt levels
+(from L3), not of the starter.
 
-Independently, --no-experiments leaves out the dev tooling (run_dev.sh,
-dev/), for agents that must not run training.
+--no-experiments leaves out the dev tooling (run_dev.sh, dev/), for agents
+that must not run training.
 
 Usage (from the repository root):
-    python rlenv/sanitize.py              # both variants in rlenv/starter/<variant>/, git-inited
-    python rlenv/sanitize.py --no-experiments   # in rlenv/starter/<variant>-noexp/
-    python rlenv/sanitize.py --variant no-hint --out DIR --no-git
+    python rlenv/sanitize.py                    # rlenv/starter/exp/, git-inited
+    python rlenv/sanitize.py --no-experiments   # rlenv/starter/noexp/
+    python rlenv/sanitize.py --out DIR --no-git
 """
 import argparse
 import hashlib
@@ -38,7 +36,7 @@ HERE = Path(__file__).resolve().parent
 
 # Top-level entries never copied: the environment itself, VCS state, and files
 # that describe or test the method (README, figure, sweeps, drift test).
-EXCLUDE_TOP = {".git", "rlenv", "README.md", "assets", "sweeps", "tests"}
+EXCLUDE_TOP = {".git", "rlenv", "README.md", "assets", "sweeps", "tests", ".dockerignore"}
 # Files added to every starter (dev tooling for the agent), copied as is.
 EXTRA = HERE / "starter_extra"
 EXCLUDE_ANY = {"__pycache__", ".pytest_cache", ".ipynb_checkpoints", ".DS_Store", "outputs", "wandb", ".venv"}
@@ -249,8 +247,9 @@ so any loss written for train_rl.py runs here unchanged.
      """# Default setting (the evaluation uses other seeds)."""),
 ]
 
-# Extra edits for the no-hint variant, applied to the topk-hint starter.
-NO_HINT_EDITS = [
+# Applied after EDITS: hide the sampler's next-token distribution (off by
+# default, not passed to the loss, not documented outside the sampler).
+HIDE_SAMPLER_DIST_EDITS = [
     ("train_rl.py",
      "  vocab_logprobs: 128  # sampler next-token distribution recorded per position: null | k (top-k) | full",
      "  vocab_logprobs: null  # also return the sampler's top logprobs per position: null | k | full"),
@@ -275,7 +274,6 @@ and its next-token distribution (`sampler.vocab_logprobs`: top-k, `full`, or
      """The sampler records the logprob of every sampled token. The loss is in
 [`losses.py`](losses.py)."""),
 ]
-VARIANTS = ("topk-hint", "no-hint")
 
 # Audit: words that would reveal the method or its source. A hit fails the
 # build unless its line matches an ALLOW pattern; LICENSE is exempt (the MIT
@@ -326,11 +324,11 @@ in a few minutes on a CPU.
 """
 
 
-def starter_name(variant, experiments=True):
-    return variant if experiments else f"{variant}-noexp"
+def starter_name(experiments=True):
+    return "exp" if experiments else "noexp"
 
 
-def transform(out, variant, experiments=True):
+def transform(out, experiments=True):
     files = {}
     for path, *_ in EDITS + SPANS:
         files.setdefault(path, (out / path).read_text())
@@ -351,9 +349,8 @@ def transform(out, variant, experiments=True):
     else:
         # no way to run training: no dev tooling, and the README does not mention it
         (out / "README.md").write_text(apply_edit(README, README_RUN_DEV, "", "README.md (no experiments)"))
-    if variant == "no-hint":
-        for path, old, new in NO_HINT_EDITS:
-            (out / path).write_text(apply_edit((out / path).read_text(), old, new, f"{path} (no-hint)"))
+    for path, old, new in HIDE_SAMPLER_DIST_EDITS:
+        (out / path).write_text(apply_edit((out / path).read_text(), old, new, path))
 
 
 def audit(out):
@@ -382,35 +379,30 @@ def git_init(out):
     run("commit", "-q", "-m", "Initial commit")
 
 
-def build(variant, out, git=True, experiments=True):
+def build(out, git=True, experiments=True):
     out = out.resolve()
     if out.exists():
         shutil.rmtree(out)
     copy_tree(out)
-    transform(out, variant, experiments)
+    transform(out, experiments)
     hits = audit(out)
     if hits:
-        raise SystemExit(f"{variant}: audit failed, possible leaks:\n" + "\n".join(hits))
+        raise SystemExit(f"{starter_name(experiments)}: audit failed, possible leaks:\n" + "\n".join(hits))
     if git:
         git_init(out)
     n = sum(1 for f in out.rglob("*") if f.is_file() and ".git" not in f.parts)
-    print(f"{starter_name(variant, experiments)}: starter written to {out} ({n} files), audit clean")
+    print(f"{starter_name(experiments)}: starter written to {out} ({n} files), audit clean")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--variant", choices=VARIANTS, help="build one variant (default: both)")
-    parser.add_argument("--out", type=Path, help="output dir (requires --variant; default rlenv/starter/<name>)")
     parser.add_argument("--no-experiments", action="store_true",
                         help="starter without run_dev.sh and dev/ (the agent cannot run training)")
+    parser.add_argument("--out", type=Path, help="output dir (default rlenv/starter/exp or noexp)")
     parser.add_argument("--no-git", action="store_true", help="skip git init of the starter")
     args = parser.parse_args()
-    if args.out and not args.variant:
-        parser.error("--out requires --variant")
-    for variant in [args.variant] if args.variant else VARIANTS:
-        experiments = not args.no_experiments
-        out = args.out or HERE / "starter" / starter_name(variant, experiments)
-        build(variant, out, git=not args.no_git, experiments=experiments)
+    experiments = not args.no_experiments
+    build(args.out or HERE / "starter" / starter_name(experiments), git=not args.no_git, experiments=experiments)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Inspect AI task: can an agent find score centering from hints?
 
-One sample per (starter variant, hint level). The agent works in a Docker
+One sample per hint level. The agent works in a Docker
 sandbox holding the starter repository (no network, CPU only for now) and
 must leave `losses.py` and `REPORT.md` in /workspace. Three scorers:
 
@@ -12,7 +12,7 @@ The agent's code only ever runs inside containers: its sandbox, and the
 grader image (no network, submission mounted read-only).
 
     inspect eval rlenv/task.py --model <agent model> \
-        -T levels=L3,L4 -T variants=no-hint -T judges=<judge model> -T hours=4
+        -T levels=L3,L4 -T experiments=true -T judges=<judge model> -T hours=4
 """
 import asyncio
 import difflib
@@ -82,26 +82,23 @@ def content_digest(*paths):
     return h.hexdigest()[:12]
 
 
-def prepare(variants, experiments, cpus, rebuild=False):
-    """Generate the starters, build the images they need and write one
-    compose file per starter. Returns {variant: compose file}."""
+def prepare(experiments, cpus, rebuild=False):
+    """Generate the starter, build the images and write the sandbox compose
+    file. Returns (starter name, compose file)."""
     have = lambda tag: subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0
     if rebuild or not have(GRADER_IMAGE):
         _docker_build(GRADER_IMAGE, HERE / "docker/Dockerfile.grader", ROOT)
-    composes = {}
-    for variant in variants:
-        starter = sanitize.starter_name(variant, experiments)
-        sanitize.build(variant, HERE / "starter" / starter, experiments=experiments)
-        dockerfile = HERE / "docker/Dockerfile.agent-cpu"
-        # the tag names the starter's content: rebuild only when it changed
-        tag = AGENT_IMAGE.format(starter=starter, digest=content_digest(HERE / "starter" / starter, dockerfile))
-        if rebuild or not have(tag):
-            _docker_build(tag, dockerfile, HERE, ["--build-arg", f"STARTER={starter}"])
-        path = HERE / "docker/generated" / f"compose.{starter}.yaml"
-        path.parent.mkdir(exist_ok=True)
-        path.write_text(COMPOSE.format(starter=starter, image=tag, cpus=cpus))
-        composes[variant] = path
-    return composes
+    starter = sanitize.starter_name(experiments)
+    sanitize.build(HERE / "starter" / starter, experiments=experiments)
+    dockerfile = HERE / "docker/Dockerfile.agent-cpu"
+    # the tag names the starter's content: rebuild only when it changed
+    tag = AGENT_IMAGE.format(starter=starter, digest=content_digest(HERE / "starter" / starter, dockerfile))
+    if rebuild or not have(tag):
+        _docker_build(tag, dockerfile, HERE, ["--build-arg", f"STARTER={starter}"])
+    path = HERE / "docker/generated" / f"compose.{starter}.yaml"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(COMPOSE.format(starter=starter, image=tag, cpus=cpus))
+    return starter, path
 
 
 # ------------------------------------------------------------------ submission
@@ -210,25 +207,22 @@ def judge(models):
 
 # ------------------------------------------------------------------ task
 @task
-def score_centering(levels="L2a,L2b,L3,L4", variants="no-hint", experiments=True, judges="", hours=8.0,
-                    cpus=4, message_limit=None, epochs=1, rebuild=False):
+def score_centering(levels="L2a,L2b,L3,L4", experiments=True, judges="", hours=8.0, cpus=4,
+                    message_limit=None, epochs=1, rebuild=False):
     """experiments: whether the agent can run training (run_dev.sh, dev/mini.py).
     The starter and the tools section of the prompt follow it."""
     levels = [l.strip() for l in str(levels).split(",") if l.strip()]
-    variants = [v.strip() for v in str(variants).split(",") if v.strip()]
     judges = [j.strip() for j in str(judges).split(",") if j.strip()]
     experiments = str(experiments).lower() not in ("false", "0", "no")
-    composes = prepare(variants, experiments, cpus, rebuild=bool(rebuild))
+    starter, compose_file = prepare(experiments, cpus, rebuild=bool(rebuild))
     budget = CPU_BUDGET.format(cpus=cpus, hours=float(hours))
     samples = []
-    for variant in variants:
-        for level in levels:
-            starter = sanitize.starter_name(variant, experiments)
-            text = prompts.compose(level, budget, experiments=experiments)
-            samples.append(Sample(id=f"{starter}-{level}", input=text,
-                                  metadata={"level": level, "variant": variant, "starter": starter,
-                                            "experiments": experiments, "prompt": text},
-                                  sandbox=("docker", str(composes[variant]))))
+    for level in levels:
+        text = prompts.compose(level, budget, experiments=experiments)
+        samples.append(Sample(id=f"{starter}-{level}", input=text,
+                              metadata={"level": level, "starter": starter, "experiments": experiments,
+                                        "prompt": text},
+                              sandbox=("docker", str(compose_file))))
     scorers = [theory(), guard()] + ([judge(judges)] if judges else [])
     agent = react(
         prompt=("You are a machine learning researcher. Work in /workspace with the tools you have. "

@@ -5,8 +5,8 @@ FROM python:3.12-slim
 RUN --mount=type=secret,id=pipca,required=false \
     if [ -f /run/secrets/pipca ]; then export PIP_CERT=/run/secrets/pipca; fi; \
     pip install --no-cache-dir "jax==0.12.0.1" "jaxlib==0.12.0.1" optax numpy omegaconf
-# STARTER: a directory of rlenv/starter/ (no-hint, topk-hint, no-hint-noexp, ...)
-ARG STARTER=no-hint
+# STARTER: a directory of rlenv/starter/ (exp or noexp)
+ARG STARTER=exp
 COPY starter/${STARTER}/ /workspace/
 WORKDIR /workspace
 ENV DEV_BACKEND=cpu
