@@ -43,3 +43,28 @@ Récompense d'évaluation finale (modèle propre, 512 prompts fixes).
   sous fort décalage (KL de 1 à 2 nats par token) TIS fait mieux que SC.
 - Le régime de l'article (petit décalage, grand vocabulaire avec une longue
   queue de tokens peu probables) n'est pas encore reproduit.
+
+## Grand vocabulaire (option 1)
+
+Ajout de tokens « distracteurs » qui n'apparaissent jamais dans une bonne
+réponse (`MINI_EXTRA_TOKENS`), pour imiter la longue queue d'un vocabulaire
+de LLM. Avantages centrés par groupe, 600 pas, seed 0.
+
+Vocabulaire 512, réponses de 5 tokens, échauffement 30 pas (récompense 0,73,
+masse de la queue sous q ≈ 4 %, qui tombe à 0,4 % pendant le RL) :
+
+| Bruit | REINFORCE | TIS | SC |
+|---|---|---|---|
+| 0,1 | 0,91 | 0,92 | 0,92 |
+| 0,3 | 0,82 | 0,88 | 0,86 |
+
+Vocabulaire 512, réponses de 10 tokens (`MINI_PROMPT=10`), échauffement 40 pas :
+
+| Bruit | REINFORCE | TIS | SC |
+|---|---|---|---|
+| 0,2 | 0,71 | 0,71 | 0,71 |
+| 0,4 | 0,51 (en baisse) | 0,63 | 0,65 |
+
+Lecture : le grand vocabulaire ne crée pas de séparation entre SC et TIS.
+Le RL écrase vite la queue, ce qui retire aux tokens rares leur poids dans
+la dérive. REINFORCE reste la seule méthode clairement pénalisée.

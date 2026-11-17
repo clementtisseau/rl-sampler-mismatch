@@ -11,6 +11,7 @@ train_rl.py, so any loss written for train_rl.py runs here unchanged.
 """
 import argparse
 import json
+import os
 import sys
 import time
 from functools import partial
@@ -26,8 +27,11 @@ ROOT = Path(__file__).resolve().parents[2]
 # ---------------------------------------------------------------- task
 DIGITS = 10
 SEP, EOS = DIGITS, DIGITS + 1
-VOCAB = DIGITS + 2
-PROMPT = 5                      # digits to sort
+# Extra tokens that never appear in a correct answer: a long tail of
+# unlikely tokens, as in an LLM vocabulary (env MINI_EXTRA_TOKENS).
+EXTRA = int(os.environ.get("MINI_EXTRA_TOKENS", "0"))
+VOCAB = DIGITS + 2 + EXTRA
+PROMPT = int(os.environ.get("MINI_PROMPT", "5"))  # digits to sort
 T = PROMPT + 1 + PROMPT + 1     # prompt, SEP, answer, EOS
 
 
@@ -208,7 +212,9 @@ def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=
         clean_lp = jnp.take_along_axis(logprobs(params, tokens), jnp.roll(tokens, -1, 1)[..., None], -1)[..., 0]
         m = jnp.roll(mask, -1, 1).at[:, -1].set(False)
         kl = ((tok_lp - clean_lp) * m).sum() / m.sum()
-        return params, state, {"reward": r.mean(), "kl_samp_train": kl, "grad_norm": optax.global_norm(grads)}
+        tail_q = (jnp.exp(vocab_lp[..., DIGITS + 2:]).sum(-1) * m).sum() / m.sum()
+        return params, state, {"reward": r.mean(), "kl_samp_train": kl, "grad_norm": optax.global_norm(grads),
+                               "tail_mass_q": tail_q}
 
     @jax.jit
     def evaluate(params, key):
