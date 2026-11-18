@@ -13,3 +13,4 @@ logs
 # rlenv: generated starter tree (rebuilt by rlenv/sanitize.py)
 rlenv/starter/
 rlenv/docker/generated/
+rlenv/claude_agent/state/

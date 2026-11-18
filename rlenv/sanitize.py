@@ -36,7 +36,7 @@ HERE = Path(__file__).resolve().parent
 
 # Top-level entries never copied: the environment itself, VCS state, and files
 # that describe or test the method (README, figure, sweeps, drift test).
-EXCLUDE_TOP = {".git", "rlenv", "README.md", "assets", "sweeps", "tests", ".dockerignore"}
+EXCLUDE_TOP = {".git", "rlenv", "README.md", "assets", "sweeps", "tests", ".dockerignore", ".claude"}
 # Files added to every starter (dev tooling for the agent), copied as is.
 EXTRA = HERE / "starter_extra"
 EXCLUDE_ANY = {"__pycache__", ".pytest_cache", ".ipynb_checkpoints", ".DS_Store", "outputs", "wandb", ".venv"}
