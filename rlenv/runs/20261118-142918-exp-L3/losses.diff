@@ -1,0 +1,48 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,26 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++def sampler_baseline(logp_vocab, b):
++    """b(h) = sum_v q(v|h) log p(v|h) with q detached. grad b = s_bar(h), the
++    sampler-averaged score, so logp(y) - b has expected gradient under y~q equal
++    to sum_v q(v) (s_v - s_bar) = 0 for the drift term. Full q: exact. Top-k q:
++    exact on the top-k, leftover q mass spread over the tail in proportion to p.
++    No sampler distribution recorded: 0 (plain REINFORCE)."""
++    if "sampling_vocab_logprobs" in b:
++        q = jnp.exp(b["sampling_vocab_logprobs"].astype(jnp.float32))
++        return (q * logp_vocab).sum(-1)  # q has no gradient path; grad flows via logp_vocab
++    if "sampler_topk_ids" in b:
++        ids, qk = b["sampler_topk_ids"], jnp.exp(b["sampler_topk_logprobs"].astype(jnp.float32))
++        lp_k = jnp.take_along_axis(logp_vocab, ids, -1)
++        p_k = jnp.exp(lp_k)
++        rest_q = jnp.maximum(1.0 - qk.sum(-1), 0.0)
++        tail_p = sg(jnp.maximum(1.0 - sg(p_k).sum(-1), 1e-6))
++        tail_lp = ((jnp.exp(sg(logp_vocab)) * logp_vocab).sum(-1) - (sg(p_k) * lp_k).sum(-1)) / tail_p
++        return (qk * lp_k).sum(-1) + rest_q * tail_lp
++    return jnp.zeros(logp_vocab.shape[:-1], jnp.float32)
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -110,7 +130,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -121,7 +141,8 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        base = sampler_baseline(logp_vocab, b)
++        terms = {"score": w * (logp - base), "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
