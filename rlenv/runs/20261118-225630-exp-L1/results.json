@@ -1,0 +1,96 @@
+{
+  "run_id": "20261118-225630-exp-L1",
+  "level": "L1",
+  "experiments": true,
+  "minutes": 10.8,
+  "submitted": true,
+  "changed": true,
+  "configuration": [
+    "sampler.vocab_logprobs=32"
+  ],
+  "theory": {
+    "passed": true,
+    "passed_topk": true,
+    "scenarios": {
+      "full": {
+        "passed": true,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": true,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 5.820706405756937e-08,
+          "no_drift_prefix": 3.2903972879694265e-08,
+          "on_policy": 2.517842574434326e-07,
+          "bounded": 1.2510170936584473,
+          "alignment": 0.7466804385185242
+        }
+      },
+      "topk": {
+        "passed": true,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": true,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 1.316278002150284e-07,
+          "no_drift_prefix": 7.53510676076985e-08,
+          "on_policy": 2.6658258889256103e-07,
+          "bounded": 1.242716908454895,
+          "alignment": 0.7407826781272888
+        }
+      }
+    },
+    "passed_with_tis": true,
+    "with_tis": {
+      "full": {
+        "passed": true,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": true,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 8.034334086914896e-08,
+          "no_drift_prefix": 3.357679290161286e-08,
+          "on_policy": 2.5179312501677487e-07,
+          "bounded": 2.2911694049835205,
+          "alignment": 0.8588075041770935
+        }
+      },
+      "topk": {
+        "passed": true,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": true,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 8.197415013455611e-08,
+          "no_drift_prefix": 4.0827345060279185e-08,
+          "on_policy": 2.6658258889256103e-07,
+          "bounded": 2.348106622695923,
+          "alignment": 0.8508368134498596
+        }
+      }
+    }
+  },
+  "guard": {
+    "passed": true,
+    "normalized": 0.8580645026326966,
+    "final_eval_reward": [
+      0.7625000476837158,
+      0.8378905653953552,
+      0.8136717677116394
+    ],
+    "reinforce": 0.6661458810170492,
+    "score_centering": 0.8276041150093079
+  },
+  "agent_commands": 18
+}
