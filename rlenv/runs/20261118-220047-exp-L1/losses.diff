@@ -1,0 +1,24 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,12 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++# Used when loss_fn_rl gets no correction (the default): sequence-level,
++# sign-aware truncated IS. Negative-advantage sequences get min(1, p(y)/q(y)),
++# positive ones weight 1. See REPORT.md.
++DEFAULT_CORRECTION = ISCorrection(level="seq_sum", high=1.0, outside="clamp", sign="neg")
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -102,7 +108,7 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    c = DEFAULT_CORRECTION if correction is None else correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
