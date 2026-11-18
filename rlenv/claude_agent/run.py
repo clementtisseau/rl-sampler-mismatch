@@ -111,7 +111,7 @@ def finish(args):
                "minutes": round((time.time() - meta["started"]) / 60, 1),
                "submitted": bool(losses), "changed": bool(diff), "configuration": config}
     if losses:
-        results["theory"] = shared.run_grader_sync(losses, shared.THEORY_ARGS, 900)
+        results["theory"] = shared.run_grader_sync(losses, shared.THEORY_ARGS, 1800)
         results["guard"] = shared.run_grader_sync(losses, [*shared.GUARD_ARGS, *config], 3600)
     log = Path(meta["log"])
     results["agent_commands"] = sum(1 for _ in open(log)) if log.exists() else 0
@@ -120,8 +120,8 @@ def finish(args):
     summary = {k: results.get(k) for k in ("run_id", "minutes", "submitted", "changed", "agent_commands")}
     for k in ("theory", "guard"):
         if k in results:
-            summary[k] = {"passed": results[k].get("passed"), **({"normalized": results[k]["normalized"]}
-                                                                if "normalized" in results[k] else {})}
+            summary[k] = {"passed": results[k].get("passed"),
+                          **{f: results[k][f] for f in ("passed_with_tis", "normalized") if f in results[k]}}
     print(json.dumps(summary, indent=2))
 
 

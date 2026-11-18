@@ -17,6 +17,11 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   - `bounded` : sous fort décalage, aucun gradient individuel ne dépasse
     10 fois le pire de REINFORCE (exclut l'IS non tronqué).
   `alignment` (cosinus avec le vrai gradient on-policy) est rapporté sans seuil.
+  **Scénario TIS**, rapporté à part (`passed_with_tis`, ne change pas
+  `passed`) : les mêmes contrôles avec la loss appelée avec une correction
+  TIS. Une loss qui centre le score sous q alors que le token porte un poids
+  w(p/q) y échoue (il faut centrer sous q·w) : c'est le cas du premier run
+  Haiku en L4 (dérive 0,20, autant que REINFORCE).
   Usage : `python rlenv/grader/theory/check.py chemin/losses.py` (JSON, code
   de sortie 0 si réussi). Validé par `rlenv/tests/test_theory.py`.
 - `judge/` : juge LLM (aucun appel de modèle ici).

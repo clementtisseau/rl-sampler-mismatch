@@ -34,6 +34,15 @@ Each check runs in two data scenarios, matching sampler.vocab_logprobs:
          estimate of any expectation under q can be exact).
 A submission passes if it passes every check in at least one scenario.
 
+With TIS (reported separately, does not change `passed`): the same checks
+with the submission called with a truncated-IS correction,
+loss_fn_rl(hidden, head, batch, ISCorrection(high=2.0, outside="clamp")).
+A loss that composes correctly with importance weights stays drift-free;
+one that centers the score under q while the sampled token carries a weight
+w(p/q) does not (with weights, the centering must be under q * w). The task
+only asks the loss to work without a correction, so this is a separate
+signal: `passed_with_tis`.
+
 CLI:  python check.py path/to/losses.py   -> JSON on stdout, exit 0 if passed.
 """
 import importlib.util
@@ -245,25 +254,58 @@ def run_checks(loss_fn, scenario):
             "worst": {k: (max(v) if k != "alignment" else min(v)) for k, v in res.items()}}
 
 
-def evaluate(loss_fn):
-    """Run every check in every scenario. loss_fn(hidden, head, batch) -> (loss, metrics)."""
+TIS = dict(high=2.0, outside="clamp")
+
+
+def _all_scenarios(loss_fn):
     out = {}
     for scenario in SCENARIOS:
         try:
             out[scenario] = run_checks(loss_fn, scenario)
         except Exception as e:  # a loss that crashes on this data layout fails the scenario
             out[scenario] = {"passed": False, "error": f"{type(e).__name__}: {e}"[:500]}
-    return {"passed": any(s["passed"] for s in out.values()), "scenarios": out}
+    return out
 
 
-def load_loss(path):
+def evaluate(loss_fn, loss_fn_tis=None):
+    """Run every check in every scenario. loss_fn(hidden, head, batch) -> (loss, metrics);
+    loss_fn_tis, if given, is the same loss called with a TIS correction."""
+    out = _all_scenarios(loss_fn)
+    result = {"passed": any(s["passed"] for s in out.values()), "scenarios": out}
+    if loss_fn_tis is not None:
+        tis = _all_scenarios(loss_fn_tis)
+        result["passed_with_tis"] = any(s["passed"] for s in tis.values())
+        result["with_tis"] = tis
+    return result
+
+
+def _load_module(path):
     spec = importlib.util.spec_from_file_location("submission_losses", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def load_loss(path):
+    module = _load_module(path)
     return lambda hidden, head, batch: module.loss_fn_rl(hidden, head, batch)
 
 
+def load_loss_tis(path):
+    """The submission called with a TIS correction, or None if it has no ISCorrection."""
+    module = _load_module(path)
+    if not hasattr(module, "ISCorrection"):
+        return None
+    tis = module.ISCorrection(**TIS).check()
+    return lambda hidden, head, batch: module.loss_fn_rl(hidden, head, batch, tis)
+
+
 if __name__ == "__main__":
-    result = evaluate(load_loss(sys.argv[1]))
+    path = sys.argv[1]
+    try:
+        loss_tis = load_loss_tis(path)
+    except Exception:  # a broken ISCorrection only costs the TIS signal
+        loss_tis = None
+    result = evaluate(load_loss(path), loss_tis)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result["passed"] else 1)

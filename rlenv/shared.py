@@ -19,7 +19,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
 import sanitize  # noqa: E402
 
-GRADER_IMAGE = "sc-rlenv-grader"
+GRADER_IMAGE = "sc-rlenv-grader:{digest}"
 AGENT_IMAGE = "sc-rlenv-agent-cpu:{starter}-{digest}"
 WORKSPACE = "/workspace"
 CPU_BUDGET = "Budget: {cpus} CPU cores, no GPU, and {hours:g} hours of working time."
@@ -41,20 +41,27 @@ def content_digest(*paths):
     """Short hash of files' relative paths and contents (directories walked)."""
     h = hashlib.sha256()
     for root in paths:
-        # .git is skipped: it follows from the files, and its index holds timestamps
-        files = sorted(f for f in root.rglob("*") if f.is_file() and ".git" not in f.relative_to(root).parts) \
-            if root.is_dir() else [root]
+        # .git is skipped (it follows from the files, and its index holds
+        # timestamps), and so are Python caches (not copied into images)
+        skip = lambda f: {".git", "__pycache__"} & set(f.relative_to(root).parts) or f.suffix == ".pyc"
+        files = sorted(f for f in root.rglob("*") if f.is_file() and not skip(f)) if root.is_dir() else [root]
         for f in files:
             h.update(str(f.relative_to(root.parent)).encode())
             h.update(f.read_bytes())
     return h.hexdigest()[:12]
 
 
+def grader_image():
+    """Grader tag, named by the content it copies in: rebuilt when it changes."""
+    digest = content_digest(HERE / "docker/Dockerfile.grader", ROOT / "losses.py", HERE / "grader", HERE / "mini")
+    return GRADER_IMAGE.format(digest=digest)
+
+
 def ensure_images(experiments, rebuild=False):
     """Generate the starter and build the grader and agent images.
     Returns (starter name, agent image tag)."""
-    if rebuild or not have_image(GRADER_IMAGE):
-        docker_build(GRADER_IMAGE, HERE / "docker/Dockerfile.grader", ROOT)
+    if rebuild or not have_image(grader_image()):
+        docker_build(grader_image(), HERE / "docker/Dockerfile.grader", ROOT)
     starter = sanitize.starter_name(experiments)
     sanitize.build(HERE / "starter" / starter, experiments=experiments)
     dockerfile = HERE / "docker/Dockerfile.agent-cpu"
@@ -77,7 +84,7 @@ def configuration(report):
 def grader_command(submission_dir, args):
     """docker run line for a grader script on <submission_dir>/losses.py."""
     return ["docker", "run", "--rm", "--network", "none", "--cpus", "4", "-v", f"{submission_dir}:/sub:ro",
-            GRADER_IMAGE, "python", "-I", *args]
+            grader_image(), "python", "-I", *args]
 
 
 THEORY_ARGS = ["rlenv/grader/theory/check.py", "/sub/losses.py"]

@@ -118,3 +118,18 @@ def test_starter_loss_fails(tmp_path):
         r = check.evaluate(check.load_loss(out / "losses.py"))
         assert not r["passed"]
         assert all(not s["checks"]["no_drift"] for s in r["scenarios"].values())
+
+
+def test_tis_scenario():
+    """Composition with importance weights: centering under q * w passes,
+    centering under q while the token carries w (Haiku's L4 loss) does not."""
+    tis = C(**check.TIS)
+    sc = check.evaluate(reference(None, True), reference(tis, True))
+    assert sc["passed"] and sc["passed_with_tis"]
+    pg = check.evaluate(reference(), reference(tis))
+    assert not pg["passed"] and not pg["passed_with_tis"]
+    fixture = ROOT / "rlenv/tests/fixtures/haiku_L4_losses.py"
+    haiku = check.evaluate(check.load_loss(fixture), check.load_loss_tis(fixture))
+    assert haiku["passed"] and not haiku["passed_with_tis"]
+    for s in haiku["with_tis"].values():
+        assert not s["checks"]["no_drift"] and s["checks"]["on_policy"]
