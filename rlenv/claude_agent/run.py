@@ -121,7 +121,7 @@ def finish(args):
     for k in ("theory", "guard"):
         if k in results:
             summary[k] = {"passed": results[k].get("passed"),
-                          **{f: results[k][f] for f in ("passed_with_tis", "normalized") if f in results[k]}}
+                          **{f: results[k][f] for f in ("passed_topk", "passed_with_tis", "normalized") if f in results[k]}}
     print(json.dumps(summary, indent=2))
 
 

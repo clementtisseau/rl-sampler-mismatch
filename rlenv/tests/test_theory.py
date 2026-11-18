@@ -133,3 +133,14 @@ def test_tis_scenario():
     assert haiku["passed"] and not haiku["passed_with_tis"]
     for s in haiku["with_tis"].values():
         assert not s["checks"]["no_drift"] and s["checks"]["on_policy"]
+
+
+def test_passed_topk():
+    """Truncating the sum to the top-k head (Haiku's L3 loss) passes with the
+    full distribution but fails top-k, even on-policy; the reference passes both."""
+    assert check.evaluate(reference(None, True))["passed_topk"]
+    fixture = ROOT / "rlenv/tests/fixtures/haiku_L3_losses.py"
+    r = check.evaluate(check.load_loss(fixture))
+    assert r["passed"] and not r["passed_topk"]
+    assert r["scenarios"]["full"]["passed"]
+    assert not r["scenarios"]["topk"]["checks"]["on_policy"]

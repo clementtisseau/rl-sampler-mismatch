@@ -33,6 +33,9 @@ Each check runs in two data scenarios, matching sampler.vocab_logprobs:
          built so that outside its top-k it is proportional to p (so a top-k
          estimate of any expectation under q can be exact).
 A submission passes if it passes every check in at least one scenario.
+`passed_topk` says whether it passes the topk scenario: what a real inference
+engine provides, and where a loss that only truncates the sum to the head is
+biased even on-policy.
 
 With TIS (reported separately, does not change `passed`): the same checks
 with the submission called with a truncated-IS correction,
@@ -271,7 +274,8 @@ def evaluate(loss_fn, loss_fn_tis=None):
     """Run every check in every scenario. loss_fn(hidden, head, batch) -> (loss, metrics);
     loss_fn_tis, if given, is the same loss called with a TIS correction."""
     out = _all_scenarios(loss_fn)
-    result = {"passed": any(s["passed"] for s in out.values()), "scenarios": out}
+    result = {"passed": any(s["passed"] for s in out.values()), "passed_topk": out["topk"]["passed"],
+              "scenarios": out}
     if loss_fn_tis is not None:
         tis = _all_scenarios(loss_fn_tis)
         result["passed_with_tis"] = any(s["passed"] for s in tis.values())

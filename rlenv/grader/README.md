@@ -17,6 +17,10 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   - `bounded` : sous fort décalage, aucun gradient individuel ne dépasse
     10 fois le pire de REINFORCE (exclut l'IS non tronqué).
   `alignment` (cosinus avec le vrai gradient on-policy) est rapporté sans seuil.
+  **`passed_topk`**, rapporté à part : réussite du scénario top-k seul, le cas
+  d'un vrai moteur d'inférence. Une loss qui tronque la somme aux k premiers
+  tokens sans modéliser la queue y échoue, même en on-policy : c'est le cas
+  du premier run Haiku en L3.
   **Scénario TIS**, rapporté à part (`passed_with_tis`, ne change pas
   `passed`) : les mêmes contrôles avec la loss appelée avec une correction
   TIS. Une loss qui centre le score sous q alors que le token porte un poids

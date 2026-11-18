@@ -107,7 +107,8 @@ def theory():
         if not losses:
             return Score(value=0, explanation="no losses.py")
         result = await run_grader(losses, THEORY_ARGS, 1800)
-        explanation = f"passed={result.get('passed')} passed_with_tis={result.get('passed_with_tis')}"
+        explanation = (f"passed={result.get('passed')} passed_topk={result.get('passed_topk')} "
+                       f"passed_with_tis={result.get('passed_with_tis')}")
         return Score(value=int(bool(result.get("passed"))), explanation=explanation, metadata=result)
     return score
 
