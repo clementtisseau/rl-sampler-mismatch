@@ -1,0 +1,16 @@
+--- a/losses.py
++++ b/losses.py
+@@ -107,6 +107,13 @@
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
+     mask = jnp.roll(batch["mask"], -1, axis=1).at[:, -1].set(False)
++    # Token-weighted centering: the loss sums A_i * (sum_t log p_t) over tokens, so the
++    # effective per-token weight is A_i. Make sum_i A_i L_i = 0 (L_i = #completion tokens)
++    # so the q != p bias term (mean-advantage * E_q[grad log p]) cancels. See REPORT.md.
++    adv0 = batch["advantages"]
++    len_i = mask.sum(1).astype(adv0.dtype)
++    adv0 = adv0 - sg((adv0 * len_i).sum() / jnp.maximum(len_i.sum(), 1.0))
++    batch = {**batch, "advantages": adv0}
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
