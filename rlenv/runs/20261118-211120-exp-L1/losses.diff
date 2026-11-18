@@ -1,0 +1,41 @@
+--- a/losses.py
++++ b/losses.py
+@@ -29,6 +29,8 @@
+ 
+ 
+ DUAL_CLIP = 3.0  # PPO's ratio bound for negative advantages (arXiv:1912.09729)
++# Default (correction=None): token weights min(p/q, DEFAULT_CLIP), self-normalized over the batch. See REPORT.md.
++DEFAULT_CLIP = 2.0
+ 
+ 
+ class ISCorrection(NamedTuple):
+@@ -119,9 +121,14 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if token_c is None:
++            # default: bounded token-level importance weight, detached
++            w = sg(jnp.minimum(jnp.exp(jnp.clip(logp - logq, -20.0, 20.0)), DEFAULT_CLIP))
++        else:
++            w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "weight": w, "entropy": -plogp, "kl_samp_train": sg(logq - logp),
++                 "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+@@ -138,7 +145,11 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+-    loss = -(advantages * sums["score"]).sum() / n_tokens
++    if correction is None:
++        # self-normalized: divide by the total weight, so the step size does not scale with the mismatch
++        loss = -(advantages * sums["score"]).sum() / jnp.maximum(sums["weight"].sum(), 1e-6)
++    else:
++        loss = -(advantages * sums["score"]).sum() / n_tokens
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}

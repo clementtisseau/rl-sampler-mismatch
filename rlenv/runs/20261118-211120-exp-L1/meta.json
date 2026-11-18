@@ -1,0 +1,12 @@
+{
+  "run_id": "20261118-211120-exp-L1",
+  "run_dir": "/home/user/rl-sampler-mismatch/rlenv/runs/20261118-211120-exp-L1",
+  "container": "sc-run-20261118-211120-exp-L1",
+  "image": "sc-rlenv-agent-cpu:exp-86ea06ffe945",
+  "starter": "exp",
+  "level": "L1",
+  "experiments": true,
+  "hours": 2.0,
+  "started": 1795036281.8352427,
+  "log": "/home/user/rl-sampler-mismatch/rlenv/runs/20261118-211120-exp-L1/agent_log.jsonl"
+}
