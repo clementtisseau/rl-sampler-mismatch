@@ -1,0 +1,43 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,9 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++VOCAB_CLIP = 3.0  # clip of the per-vocab-entry ratio p/q in the centered full-vocab estimator
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -110,7 +113,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -121,7 +124,20 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        score = w * logp
++        if "sampling_vocab_logprobs" in b:
++            # Centered vocab-level correction (see REPORT.md): logit-space gradient
++            # g = w_y (e_y - p) - m, m = E_{y'~q}[w_y' (e_y' - p)], so E_q[g] = 0 exactly.
++            lq = b["sampling_vocab_logprobs"].astype(jnp.float32)
++            lw = jnp.minimum(sg(logp_vocab) - lq, math.log(VOCAB_CLIP))
++            qw = jnp.exp(lq + lw)                       # q_v * w_v  [B, C, V]
++            pv = jnp.exp(sg(logp_vocab))
++            wy = jnp.exp(take_vocab(lw, b["targets"][..., None])[..., 0])
++            onehot = jax.nn.one_hot(b["targets"], logp_vocab.shape[-1], dtype=jnp.float32)
++            g = wy[..., None] * (onehot - pv) - (qw - pv * qw.sum(-1, keepdims=True))
++            score = (sg(g) * logp_vocab).sum(-1)
++            w = jnp.where(wy > 0, 1.0, 0.0)
++        terms = {"score": score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
