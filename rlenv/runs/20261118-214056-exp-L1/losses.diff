@@ -1,0 +1,27 @@
+--- a/losses.py
++++ b/losses.py
+@@ -119,7 +119,11 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if token_c is None:
++            # exact per-token importance weight p/q (see REPORT.md); no clipping, so no bias
++            w = sg(jnp.exp(jnp.clip(logp - logq, -20.0, 20.0)))
++        else:
++            w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+         terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+@@ -129,6 +133,11 @@
+ 
+     n_tokens = jnp.maximum(mask.sum(), 1)
+     advantages = batch["advantages"]
++    if token_c is None:
++        # A constant baseline is free under IS: E_q[(p/q) grad log p] = 0 at every position, so
++        # subtracting the batch mean of the advantages adds no bias and removes the variance
++        # from a constant advantage offset (e.g. plus_minus rewards, where most rollouts get -1).
++        advantages = advantages - sg(advantages.mean())
+     frac_masked = sums["masked"].sum() / n_tokens
+     if seq_c:
+         seq_tokens = jnp.maximum(mask.sum(1), 1)
