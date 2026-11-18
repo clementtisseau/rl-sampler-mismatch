@@ -1,0 +1,33 @@
+--- a/losses.py
++++ b/losses.py
+@@ -103,7 +103,9 @@
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+     c = correction
+-    token_c = c if c and c.level == "token" else None
++    # No correction given: the default is the per-token ratio w = p/q, self-normalised (see REPORT.md).
++    default = c is None
++    token_c = ISCorrection(level="token", high=math.inf) if default else (c if c.level == "token" else None)
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
+     mask = jnp.roll(batch["mask"], -1, axis=1).at[:, -1].set(False)
+@@ -121,7 +123,8 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv,
++                 "wsum": w}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+@@ -138,6 +141,9 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
++    if default:
++        # Self-normalised IS: divide by the batch sum of the (detached) weights instead of the token count.
++        n_tokens = jnp.maximum(sums["wsum"].sum(), 1e-6)
+     loss = -(advantages * sums["score"]).sum() / n_tokens
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
+     metrics["pol_entropy"] = metrics.pop("entropy")
