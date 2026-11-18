@@ -1,0 +1,35 @@
+--- a/losses.py
++++ b/losses.py
+@@ -3,6 +3,13 @@
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+ sequence.
++
++Default: a token-level weight clamped from above, w = min(p/q, 10), used
++whenever no correction is passed (see REPORT.md for the derivation). An
++uncorrected score (w = 1) has per-prefix expected update sum_x q(x) Q(x)
++grad log p(x), which carries a bias c (q - p) for any constant advantage c.
++Under q = p that bias is zero, under mismatch it is not; the weight p/q
++removes it exactly, and the cap bounds the variance of p/q.
+ """
+ import math
+ from typing import NamedTuple
+@@ -29,6 +36,9 @@
+ 
+ 
+ DUAL_CLIP = 3.0  # PPO's ratio bound for negative advantages (arXiv:1912.09729)
++
++# Used when loss_fn_rl gets no correction: token-level p/q, clamped at DEFAULT_CAP.
++DEFAULT_CAP = 10.0
+ 
+ 
+ class ISCorrection(NamedTuple):
+@@ -102,6 +112,8 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
++    if correction is None:
++        correction = ISCorrection(level="token", high=DEFAULT_CAP, outside="clamp")
+     c = correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
