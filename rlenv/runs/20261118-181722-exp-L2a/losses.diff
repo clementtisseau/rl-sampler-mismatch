@@ -1,0 +1,37 @@
+--- a/losses.py
++++ b/losses.py
+@@ -101,6 +101,10 @@
+ 
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    If the sampler also returns its full next-token distribution
++    (sampling_vocab_logprobs [B, T, V], sampler.vocab_logprobs=full) and no
++    correction is given, the score of each token is centered by the sampler's
++    expected score, see REPORT.md: grad log p(y) - sum_v q(v) grad log p(v).
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -110,7 +114,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +124,13 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        score = logp
++        if correction is None and "sampling_vocab_logprobs" in b:
++            # Control variate with exactly zero mean under q: E_q[grad log p(y)] = sum_v q(v) grad log p(v) != 0
++            q_vocab = sg(jnp.exp(b["sampling_vocab_logprobs"].astype(jnp.float32)))
++            score = logp - (q_vocab * logp_vocab).sum(-1)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
