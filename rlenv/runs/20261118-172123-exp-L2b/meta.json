@@ -1,0 +1,12 @@
+{
+  "run_id": "20261118-172123-exp-L2b",
+  "run_dir": "/home/user/rl-sampler-mismatch/rlenv/runs/20261118-172123-exp-L2b",
+  "container": "sc-run-20261118-172123-exp-L2b",
+  "image": "sc-rlenv-agent-cpu:exp-86ea06ffe945",
+  "starter": "exp",
+  "level": "L2b",
+  "experiments": true,
+  "hours": 2.0,
+  "started": 1795022483.2610233,
+  "log": "/home/user/rl-sampler-mismatch/rlenv/runs/20261118-172123-exp-L2b/agent_log.jsonl"
+}
