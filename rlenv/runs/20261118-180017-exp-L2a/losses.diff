@@ -1,0 +1,62 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,32 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++def sampler_baseline(logp_vocab, b):
++    """Per-position baseline beta_t = E_q[log p_t(v)] (v ~ q_t), whose gradient
++    is E_q[grad log p_t]: the sampler's expectation of the score (see REPORT.md).
++
++    Full sampler distribution (sampling_vocab_logprobs): beta = sum_v q(v) log p(v).
++    Top-k sampler distribution (sampler_topk_*): the same sum over the k recorded
++    tokens plus the tail, which is extrapolated from the trainer's tail:
++        beta = sum_top q log p - rho * sum_top p,   rho = Q_tail / P_tail,
++    with Q_tail = 1 - sum_top q and P_tail = 1 - sum_top p (rho is detached).
++    rho = 1 on-policy, so the top-k baseline is then exactly sum_top p log p - sum_top p,
++    whose gradient is zero: the on-policy loss is unchanged.
++    Without a recorded sampler distribution the baseline is 0 (plain REINFORCE)."""
++    if "sampling_vocab_logprobs" in b:
++        q = jnp.exp(b["sampling_vocab_logprobs"].astype(jnp.float32))
++        return (sg(q) * logp_vocab).sum(-1)
++    if "sampler_topk_ids" in b:
++        q_top = sg(jnp.exp(b["sampler_topk_logprobs"].astype(jnp.float32)))
++        logp_top = take_vocab(logp_vocab, b["sampler_topk_ids"])
++        p_top = jnp.exp(logp_top)
++        tail_q = jnp.clip(1.0 - q_top.sum(-1), 0.0, 1.0)
++        tail_p = jnp.clip(1.0 - sg(p_top.sum(-1)), 1e-6, 1.0)
++        rho = sg(tail_q / tail_p)
++        return (q_top * logp_top).sum(-1) - rho * p_top.sum(-1)
++    return 0.0
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -101,6 +127,8 @@
+ 
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    Optional, for the sampler baseline (see sampler_baseline): sampling_vocab_logprobs
++    [B, T, V] (full) or sampler_topk_ids / sampler_topk_logprobs [B, T, k].
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -110,7 +138,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -121,7 +149,7 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * (logp - sampler_baseline(logp_vocab, b)), "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
