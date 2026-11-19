@@ -1,0 +1,83 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,54 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++NEG = -1e9  # stands for log 0 in masked vocabulary entries
++
++
++def mask_vocab(logp, ids, value):
++    """Set logp[b, c, ids[b, c, k]] = value over a [B, C, V] vocab axis that may
++    be TP-sharded (scatter counterpart of take_vocab)."""
++    spec = jax.typeof(logp).sharding.spec
++    b = jnp.arange(ids.shape[0])[:, None, None]
++    c = jnp.arange(ids.shape[1])[None, :, None]
++    if spec[-1] is None:
++        return logp.at[b, c, ids].set(value)
++    return logp.at[b, c, ids].set(value, out_sharding=P(*spec))
++
++
++def sampler_expected_logp(logp_vocab, logp_tok, targets, logq_tok, topk_ids=None, topk_logq=None):
++    """E_{v~q}[log p(v)] at every position, with q the sampler's next-token
++    distribution, from what the sampler returns: the logprob of the sampled
++    token and (if available) its top-k logprobs. q is known exactly on
++    S = top-k U {sampled token}; its remaining mass q(rest) = 1 - q(S) is spread
++    over the rest of the vocabulary in proportion to p, which contributes
++    q(rest) * log p(rest). Gradients flow through p only; q is a constant.
++
++    Its gradient w.r.t. the logits z is p - q_hat (q_hat: the reconstruction
++    of q above, exact on S), so log p(y) - E_q[log p] has logit gradient
++    e_y - q_hat: the sampler's score, which has zero mean under q."""
++    logq_tok = sg(logq_tok)
++    if topk_ids is None:  # only the sampled token's q is known
++        q_s = jnp.exp(logq_tok)
++        known = q_s * logp_tok
++        excluded = mask_vocab(logp_vocab, targets[..., None], NEG)
++    else:
++        topk_logq = sg(topk_logq.astype(jnp.float32))
++        topk_logp = take_vocab(logp_vocab, topk_ids)
++        sampled_in_topk = (topk_ids == targets[..., None]).any(-1)
++        q_top = jnp.exp(topk_logq)
++        q_extra = jnp.where(sampled_in_topk, 0.0, jnp.exp(logq_tok))
++        q_s = q_top.sum(-1) + q_extra
++        known = (q_top * topk_logp).sum(-1) + q_extra * logp_tok
++        excluded = mask_vocab(logp_vocab, topk_ids, NEG)
++        excluded = mask_vocab(excluded, targets[..., None], NEG)
++    q_rest = jnp.clip(1.0 - q_s, 0.0, 1.0)
++    logp_rest = jax.nn.logsumexp(excluded, axis=-1)
++    # NEG (finite, unlike -inf) keeps logsumexp and its gradient finite when S
++    # covers the whole vocabulary; q_rest = 0 then and the tail term vanishes.
++    tail = q_rest * jnp.maximum(logp_rest, -1e4)
++    return known + tail
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -110,7 +158,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +168,15 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        # sampler-centered score: log p(y) - E_{v~q}[log p(v)]. Same value
++        # gradient as log p(y) on-policy (q = p) up to a zero-mean term; off-policy
++        # its expectation under the sampler is exactly zero, so the mismatch
++        # q - p no longer leaks into the update as a drift (REPORT.md).
++        expected = sampler_expected_logp(logp_vocab, logp, b["targets"], logq,
++                                         b.get("sampler_topk_ids"), b.get("sampler_topk_logprobs"))
++        score = logp - expected
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
