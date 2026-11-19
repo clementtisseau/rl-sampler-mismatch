@@ -1,0 +1,95 @@
+{
+  "run_id": "20261119-123601-exp-L2a",
+  "level": "L2a",
+  "experiments": true,
+  "minutes": 1.0,
+  "submitted": true,
+  "changed": true,
+  "configuration": [],
+  "theory": {
+    "passed": false,
+    "passed_topk": false,
+    "scenarios": {
+      "full": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": false,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.2209339737892151,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      },
+      "topk": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": false,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.23891252279281616,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      }
+    },
+    "passed_with_tis": false,
+    "with_tis": {
+      "full": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": false,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.01664835587143898,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      },
+      "topk": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": false,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.0004142213729210198,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      }
+    }
+  },
+  "guard": {
+    "passed": false,
+    "normalized": -2.050001790447722,
+    "final_eval_reward": [
+      0.2714843451976776,
+      0.3999999463558197,
+      0.3339843451976776
+    ],
+    "reinforce": 0.6661458810170492,
+    "score_centering": 0.8276041150093079
+  },
+  "agent_commands": 4,
+  "transcripts": 1
+}

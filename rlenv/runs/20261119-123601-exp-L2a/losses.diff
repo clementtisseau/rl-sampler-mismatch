@@ -1,0 +1,14 @@
+--- a/losses.py
++++ b/losses.py
+@@ -129,6 +129,11 @@
+ 
+     n_tokens = jnp.maximum(mask.sum(), 1)
+     advantages = batch["advantages"]
++    # Token-mass centering: the per-token score has E_q[grad log p] = grad sum_v q_v log p_v != 0 when q != p
++    # (a pull of p toward the sampler). Make the token-weighted mean advantage exactly zero so that
++    # this constant-baseline pull cancels over the batch regardless of length/advantage correlation.
++    seq_tokens0 = mask.sum(1).astype(jnp.float32)
++    advantages = advantages - sg((advantages * seq_tokens0).sum() / jnp.maximum(seq_tokens0.sum(), 1.0))
+     frac_masked = sums["masked"].sum() / n_tokens
+     if seq_c:
+         seq_tokens = jnp.maximum(mask.sum(1), 1)
