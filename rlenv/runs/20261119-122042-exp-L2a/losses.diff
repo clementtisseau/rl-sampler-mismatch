@@ -1,0 +1,25 @@
+--- a/losses.py
++++ b/losses.py
+@@ -12,6 +12,7 @@
+ import numpy as np
+ from jax.sharding import PartitionSpec as P
+ 
++MODE = 'both'  # centered advantages + exact (unclipped) token IS by default
+ sg = jax.lax.stop_gradient
+ 
+ # advantage of a (solved, unsolved) rollout; group_centered also subtracts the group mean
+@@ -103,6 +104,14 @@
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+     c = correction
++    # Token-weighted centering: sum over all completion tokens of the advantage is 0, so the
++    # baseline-times-E_q[score] bias (q - p) cancels on average (see REPORT.md).
++    if MODE in ("center", "both"):
++        m0 = batch["mask"].sum(1).astype(jnp.float32)
++        adv0 = batch["advantages"]
++        batch = dict(batch, advantages=adv0 - (adv0 * m0).sum() / jnp.maximum(m0.sum(), 1))
++    if MODE in ("is", "both") and c is None:
++        c = ISCorrection()
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
