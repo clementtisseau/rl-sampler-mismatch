@@ -1,0 +1,41 @@
+--- a/losses.py
++++ b/losses.py
+@@ -3,6 +3,12 @@
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+ sequence.
++
++Default (correction=None): q-centred score. The token score grad log p(x)
++is replaced by grad log p(x) - E_{v~q}[grad log p(v)], with the expectation
++taken over the sampler's top-k distribution (batch sampler_topk_*). See
++REPORT.md: the uncentred score has expected update A (q - p) under q, a
++drift toward the sampler that the centring removes.
+ """
+ import math
+ from typing import NamedTuple
+@@ -110,7 +116,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +126,15 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        # q-centred score (REPORT.md): subtract b = sum_v q(v) log p(v) over the
++        # sampler's top-k tokens. b is differentiable in p; q is a constant.
++        if "sampler_topk_ids" in b:
++            q_top = jnp.exp(b["sampler_topk_logprobs"])
++            baseline = (q_top * take_vocab(logp_vocab, b["sampler_topk_ids"])).sum(-1)
++        else:
++            baseline = 0.0
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * (logp - baseline), "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
