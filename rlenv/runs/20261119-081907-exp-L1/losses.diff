@@ -1,0 +1,44 @@
+--- a/losses.py
++++ b/losses.py
+@@ -101,6 +101,9 @@
+ 
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    If the sampler's top-K ids and logprobs are present (sampler_topk_ids,
++    sampler_topk_logprobs), each token's score is centred under the sampler's own
++    distribution (see REPORT.md): the score is logp minus E_q[w logp] over top-K.
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -112,6 +115,9 @@
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+     sampler_keys = ("sampling_token_logprobs",)
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
++    has_topk = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
++    if has_topk:
++        per_token |= {"topk_ids": batch["sampler_topk_ids"], "topk_lq": batch["sampler_topk_logprobs"]}
+ 
+     def chunk_sums(start):
+         b = {k: jax.lax.dynamic_slice_in_dim(v, start, chunk, axis=1) for k, v in per_token.items()}
+@@ -120,8 +126,20 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        if has_topk:
++            # sampler-centred score: subtract the expectation, under the sampler's own
++            # (top-K) distribution, of the same weighted score the sampled token gets
++            top_lq = b["topk_lq"].astype(jnp.float32)
++            top_lp = take_vocab(logp_vocab, b["topk_ids"])
++            q_top = sg(jax.nn.softmax(top_lq, axis=-1))
++            pos_top = positive[..., None] if positive.ndim == 2 else positive
++            w_top = is_weight(top_lp - top_lq, pos_top, token_c, sg(jnp.abs(jnp.exp(top_lq) - jnp.exp(top_lp))))
++            centre = (q_top * w_top * top_lp).sum(-1)
++            logp_centred = logp - centre
++        else:
++            logp_centred = logp
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp_centred, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
