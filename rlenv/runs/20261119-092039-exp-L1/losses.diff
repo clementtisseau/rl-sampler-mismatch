@@ -1,0 +1,29 @@
+--- a/losses.py
++++ b/losses.py
+@@ -119,16 +119,24 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if c is None:  # default: unclipped token ratio, self-normalised below
++            w = sg(jnp.exp(jnp.clip(logp - logq, -20.0, 20.0)))
++        else:
++            w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv, "wmass": w}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+     sums = {k: v.sum(0) for k, v in chunks.items()}  # per-sequence sums [B]
+ 
+     n_tokens = jnp.maximum(mask.sum(), 1)
++    if c is None:
++        # self-normalised: divide by the total ratio mass, sum_t r_t (detached), not the token count
++        n_tokens = jnp.maximum(sums["wmass"].sum(), 1e-6)
+     advantages = batch["advantages"]
++    if c is None:  # a constant advantage shift is not a baseline under q: centre over the batch
++        advantages = advantages - advantages.mean()
+     frac_masked = sums["masked"].sum() / n_tokens
+     if seq_c:
+         seq_tokens = jnp.maximum(mask.sum(1), 1)
