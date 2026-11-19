@@ -10,13 +10,14 @@ spec = importlib.util.spec_from_file_location("compose", ROOT / "rlenv/prompts/c
 compose = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compose)
 
-NEVER = [r"cent(er|re)ing", r"score.?cent", r"2609\.20807", r"marek", r"ryabinin", r"\bdong\b", r"control variate"]
+NEVER = [r"cent(er|re)ing", r"score.?cent", r"2609\.20807", r"marek", r"ryabinin", r"\bdong\b", r"control variate",
+         r"vocab_logprobs"]
 # what each level may say first; earlier levels must not say it
 FIRST_ALLOWED = {
     r"systematic bias|What is already known": "L1",
     r"\bprefix": "L2b",
     r"s_bar|drift|Cov_q": "L3",
-    r"vocab_logprobs|sampler_topk": "L3",
+    r"sampler_topk|top-20": "L3",
     r"sg\[|stop-gradient|\brho\b": "L4",
 }
 

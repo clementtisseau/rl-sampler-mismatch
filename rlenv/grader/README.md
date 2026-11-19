@@ -48,8 +48,8 @@ l'agent dans un arbre propre, puis calcule trois signaux :
   loss soumise sur 3 seeds cachées, puis normalise la récompense finale entre
   REINFORCE (0) et le score centering (1), mis en cache dans
   `baselines.json` (`--calibrate` les recalcule). Réussi si ≥ 0,5. Applique
-  la section `## Configuration` de l'agent (`sampler.vocab_logprobs`,
-  `rl.is.*`). Ce signal distingue « corrige la dérive » de « ne corrige
+  la section `## Configuration` de l'agent (`rl.is.*`), et donne à la loss le
+  top-20 de l'échantillonneur, comme le starter. Ce signal distingue « corrige la dérive » de « ne corrige
   rien », **pas** le score centering de TIS/MIS : voir
   `rlenv/mini/RESULTS.md`.
   Validation (moyenne des 3 seeds → score normalisé) : starter sans

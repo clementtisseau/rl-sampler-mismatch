@@ -27,7 +27,7 @@ Reported, not gated:
   alignment     Cosine between the expected update under a mild mismatch and
                 the true on-policy gradient of E_p[R].
 
-Each check runs in two data scenarios, matching sampler.vocab_logprobs:
+Each check runs in two data scenarios (the starter's sampler gives the topk one):
   full   batch has sampling_vocab_logprobs [B, T, V].
   topk   batch has sampler_topk_ids / sampler_topk_logprobs [B, T, k], with q
          built so that outside its top-k it is proportional to p (so a top-k

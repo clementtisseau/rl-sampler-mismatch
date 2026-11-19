@@ -22,7 +22,7 @@ rm -rf /
 ## Next
 sampler.staleness=0
 """
-    assert task.configuration(report) == ["sampler.vocab_logprobs=full", "rl.is.high=2.0"]
+    assert task.configuration(report) == ["rl.is.high=2.0"]  # sampler.* is not accepted
     assert task.configuration("no section") == []
 
 

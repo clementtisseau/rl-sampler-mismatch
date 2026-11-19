@@ -113,6 +113,10 @@ def generate(key, p, prompts, topk=0):
     return tokens, tok_lp, vocab_lp
 
 
+# The starter's sampler returns its top-20 logprobs per position (train_rl.py).
+SAMPLER_TOPK = 20
+
+
 def completion_mask(B):
     m = np.zeros((B, T), bool)
     m[:, PROMPT + 1:] = True
@@ -169,13 +173,14 @@ def load_losses(path):
 
 def train(method="pg", noise=0.1, seed=0, steps=300, prompts_per_step=16, group=8, lr=0.05,
           warm_steps=15, losses_path=ROOT / "losses.py", log_every=10, loss_fn=None, verbose=False,
-          reward_mode="group_centered", vocab_logprobs=None, correction=None):
+          reward_mode="group_centered", vocab_logprobs=SAMPLER_TOPK, correction=None):
     """method: a key of METHODS (reference losses.py with that correction) or
     "submission": losses_path's loss_fn_rl(hidden, head, batch, correction),
     with correction built from the rl.is.* dict `correction` (or None).
-    vocab_logprobs: what the sampler records for the loss, as in train_rl.py:
-    None (sampled tokens only), "full", or an int k (top-k head under the
-    starter's names sampler_topk_ids / sampler_topk_logprobs)."""
+    vocab_logprobs: what the sampler's next-token distribution adds to the
+    batch: an int k (top-k under the starter's names sampler_topk_ids /
+    sampler_topk_logprobs; the starter always returns the top-20), "full"
+    (sampling_vocab_logprobs), or None (sampled tokens only)."""
     losses = load_losses(losses_path)
     key = jax.random.key(seed)
     k_warm, k_noise, key = jax.random.split(key, 3)
@@ -253,9 +258,10 @@ SETTING = dict(noise=0.3, steps=600, lr=0.2, reward_mode="plus_minus")
 
 
 def parse_config(args):
-    """key=value overrides as in train_rl.py: sampler.vocab_logprobs
-    (null | full | k) and rl.is.* (an ISCorrection). Others are ignored."""
-    vocab, correction = None, {}
+    """key=value overrides: rl.is.* (an ISCorrection) and, for calibration and
+    tests, sampler.vocab_logprobs (null | full | k; default: the starter's
+    top-20). Others are ignored."""
+    vocab, correction = SAMPLER_TOPK, {}
     for arg in args:
         key, _, value = arg.partition("=")
         if key == "sampler.vocab_logprobs":

@@ -1,6 +1,5 @@
 """The CPU guard-rail fails the uncorrected starter and a zero loss, and
 passes score centering and TIS. Slow (~7 min): set RUN_SLOW=1."""
-import importlib.util
 import os
 import subprocess
 import sys
@@ -10,9 +9,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 slow = pytest.mark.skipif(os.environ.get("RUN_SLOW") != "1", reason="slow: set RUN_SLOW=1")
-spec = importlib.util.spec_from_file_location("mini_check", ROOT / "rlenv/grader/empirical/mini_check.py")
-mini_check = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mini_check)
+# imported by name, so that its multiprocessing workers (spawn) can import it too
+sys.path.insert(0, str(ROOT / "rlenv/grader/empirical"))
+import mini_check  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -33,6 +32,7 @@ def subs(tmp_path_factory):
     ("starter", "starter/losses.py", (), False),
     ("starter+tis", "starter/losses.py", ("rl.is.high=2.0", "rl.is.outside=clamp"), True),
     ("sc-full", "sc.py", ("sampler.vocab_logprobs=full",), True),
+    ("sc-top20", "sc.py", (), True),
     ("zero", "zero.py", (), False),
 ])
 def test_guard(subs, name, path, config, passed):
@@ -41,4 +41,4 @@ def test_guard(subs, name, path, config, passed):
 
 def test_parse_config():
     assert mini_check.parse_config(["sampler.vocab_logprobs=8", "rl.is.high=2.0"]) == (8, {"high": 2.0, "level": "token"})
-    assert mini_check.parse_config(["rl.is.level=null", "model.source=x"]) == (None, None)
+    assert mini_check.parse_config(["rl.is.level=null", "model.source=x"]) == (20, None)  # the starter's top-20

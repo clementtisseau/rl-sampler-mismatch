@@ -26,10 +26,7 @@ such a mismatch, and explain why it works.**
    math. Empirical results are not needed.
    - If your loss needs configuration changes, list them in a section
      `## Configuration`, one `key=value` per line. Only keys under `rl.is.*`
-     and `sampler.*` are accepted, and the keys that define the mismatch
-     (`sampler.weight_noise_scale`, `sampler.staleness`,
-     `sampler.kv_quant_bits`, `dtypes.sampler`) are always overridden by the
-     evaluation.
+     are accepted.
 
 ## Tools and budget
 

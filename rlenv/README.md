@@ -74,11 +74,15 @@ code original change, le script échoue au lieu de laisser passer la méthode.
 
 ### Décisions ouvertes
 
-- **Distribution de l'échantillonneur cachée dans le starter** : désactivée
-  par défaut (`sampler.vocab_logprobs: null`), ni passée à la loss ni
-  mentionnée hors de l'échantillonneur et de `train_rl.py`. Le prompt la
-  révèle à partir de **L3**, avec la formule de s̄ qui en a besoin : c'est un
-  indice de l'échelle des niveaux, pas une variante du starter.
+- **Distribution de l'échantillonneur dans le starter** : l'échantillonneur
+  rend toujours ses 20 meilleurs logprobs par position, comme le `logprobs=20`
+  d'un moteur d'inférence, et ils arrivent toujours dans le batch de la loss
+  (`sampler_topk_ids` / `sampler_topk_logprobs`). Aucun réglage ne leur est
+  dédié, le code du top-k est un détail privé de l'échantillonneur (fusionné
+  dans `models/sampling.py`) et rien ne les documente pour la loss :
+  `losses.py` ne transmet que le logprob des tokens tirés. Seules les clés
+  `rl.is.*` sont acceptées en configuration. Le prompt dit ce que contient le
+  batch à partir de **L3**, avec la formule de s̄ qui en a besoin.
 - **`log_mass`** reste dans `losses.py` (utilisée par `is_weight`) avec une
   docstring neutre. Sa forme générale `log(q * w(p/q))` est un indice faible.
 - **`LICENSE`** garde le nom de l'auteur (obligation de la licence MIT).

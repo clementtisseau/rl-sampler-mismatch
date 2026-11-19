@@ -78,7 +78,7 @@ def configuration(report):
     if not m:
         return []
     lines = [l.strip().strip("`").strip() for l in m.group(1).splitlines()]
-    return [l for l in lines if re.fullmatch(r"(rl\.is\.\w+|sampler\.\w+)=\S+", l)]
+    return [l for l in lines if re.fullmatch(r"rl\.is\.\w+=\S+", l)]
 
 
 def grader_command(submission_dir, args):

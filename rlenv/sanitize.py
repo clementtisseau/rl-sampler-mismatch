@@ -10,11 +10,13 @@ makes this script fail loudly instead of silently leaving the method in.
 After building, an audit greps the starter for words that would give the
 method away and fails on any hit outside a short allowlist.
 
-The sampler's next-token distribution is off by default
-(sampler.vocab_logprobs: null), never passed to the loss and not mentioned
-outside the sampler: the capability stays, like a `logprobs=k` option of an
-inference engine. Telling the agent about it is a hint of the prompt levels
-(from L3), not of the starter.
+The sampler always returns its top-20 next-token logprobs per position, like
+an inference engine's `logprobs=20`, and they always reach the loss batch
+(sampler_topk_ids / sampler_topk_logprobs). There is no setting for it, the
+top-k code is a private helper of the sampler, and nothing documents it for
+the loss: losses.py forwards only the sampled tokens' logprobs. Telling the
+agent what the batch holds is a hint of the prompt levels (from L3), not of
+the starter.
 
 --no-experiments leaves out the dev tooling (run_dev.sh, dev/), for agents
 that must not run training.
@@ -128,10 +130,14 @@ EDITS = [
      "return losses.loss_fn_rl(hidden, head, batch, correction, cfg.rl.sc)",
      "return losses.loss_fn_rl(hidden, head, batch, correction)"),
     ("models/sampling.py",
+     '    """Fill a fixed token batch after each row\'s prompt and record the sampling\n'
+     "    distribution: per-token logprobs always, plus either the full [B, T, V]\n"
      "    logprobs (logprobs_dtype) or the per-step top-k head (logprobs_topk), which\n"
      "    is what score centering consumes at ~V/k the memory.\"\"\"",
-     "    logprobs (logprobs_dtype) or the per-step top-k head (logprobs_topk), at\n"
-     "    ~k/V the memory.\"\"\""),
+     '    """Fill a fixed token batch after each row\'s prompt. Returns the tokens,\n'
+     "    the sampled tokens' logprobs and, on request, the full [B, T, V] logprobs\n"
+     "    (logprobs_dtype) or the top-k logprobs per step (logprobs_topk), as\n"
+     "    inference engines return them.\"\"\""),
 ]
 
 SPANS = [
@@ -245,35 +251,133 @@ so any loss written for train_rl.py runs here unchanged.
     ("""# Default setting, shared with rlenv/grader/empirical/mini_check.py (which
 # uses other seeds): REINFORCE plateaus here while drift-free losses improve.""",
      """# Default setting (the evaluation uses other seeds)."""),
+    # the sampler always returns its top-20 logprobs, with no setting for it
+    ("""          reward_mode="group_centered", vocab_logprobs=SAMPLER_TOPK, correction=None):""",
+     """          reward_mode="group_centered", correction=None):"""),
+    ("""    with correction built from the rl.is.* dict `correction` (or None).
+    vocab_logprobs: what the sampler's next-token distribution adds to the
+    batch: an int k (top-k under the starter's names sampler_topk_ids /
+    sampler_topk_logprobs; the starter always returns the top-20), "full"
+    (sampling_vocab_logprobs), or None (sampled tokens only).\"\"\"""",
+     """    with correction built from the rl.is.* dict `correction` (or None).\"\"\""""),
+    ("""        if vocab_logprobs == "full":
+            batch["sampling_vocab_logprobs"] = vocab_lp
+        elif isinstance(vocab_logprobs, int):
+            top_lp, top_ids = jax.lax.top_k(vocab_lp, min(vocab_logprobs, VOCAB))
+            batch |= {"sampler_topk_ids": top_ids, "sampler_topk_logprobs": top_lp}""",
+     """        top_lp, top_ids = jax.lax.top_k(vocab_lp, min(SAMPLER_TOPK, VOCAB))
+        batch |= {"sampler_topk_ids": top_ids, "sampler_topk_logprobs": top_lp}"""),
+    ("# The starter's sampler returns its top-20 logprobs per position (train_rl.py).",
+     "# Top logprobs the sampler returns per position, as in train_rl.py."),
+    ("""    \"\"\"key=value overrides: rl.is.* (an ISCorrection) and, for calibration and
+    tests, sampler.vocab_logprobs (null | full | k; default: the starter's
+    top-20). Others are ignored.\"\"\"
+    vocab, correction = SAMPLER_TOPK, {}""",
+     """    \"\"\"key=value overrides as in train_rl.py: rl.is.* (an ISCorrection).
+    Others are ignored.\"\"\"
+    correction = {}"""),
+    ("""        if key == "sampler.vocab_logprobs":
+            vocab = None if value in ("null", "None", "") else value if value == "full" else int(value)
+        elif key.startswith("rl.is."):""",
+     """        if key.startswith("rl.is."):"""),
+    ("    return vocab, (correction or None)", "    return correction or None"),
+    ("    vocab, correction = parse_config(overrides)", "    correction = parse_config(overrides)"),
+    ("                vocab_logprobs=vocab, correction=correction, **setting)",
+     "                correction=correction, **setting)"),
 ]
 
-# Applied after EDITS: hide the sampler's next-token distribution (off by
-# default, not passed to the loss, not documented outside the sampler).
-HIDE_SAMPLER_DIST_EDITS = [
+# Applied after EDITS: the sampler returns its top-20 logprobs at every
+# position, as an inference engine's logprobs=20 does, and they always reach
+# the loss batch next to the sampled tokens' logprobs. No setting is dedicated
+# to it and nothing documents it for the loss: losses.py still forwards only
+# the sampled tokens' logprobs (sampler_keys).
+SAMPLER_TOPK_EDITS = [
     ("train_rl.py",
-     "  vocab_logprobs: 128  # sampler next-token distribution recorded per position: null | k (top-k) | full",
-     "  vocab_logprobs: null  # also return the sampler's top logprobs per position: null | k | full"),
+     "  vocab_logprobs: 128  # sampler next-token distribution recorded per position: null | k (top-k) | full\n",
+     ""),
+    ("train_rl.py",
+     "    def sample(rows, weights, key, forward, vocab_logprobs=None):\n"
+     '        """group_size scored completions per row. Returns the trainer-side batch,\n'
+     "        the full sampler logprobs if requested (still on the sampler mesh), the\n"
+     '        rewards, and rollout statistics."""',
+     "    def sample(rows, weights, key, forward):\n"
+     '        """group_size scored completions per row. Returns the trainer-side batch,\n'
+     '        the rewards, and rollout statistics."""'),
+    ("train_rl.py",
+     "            tokens, token_logprobs, vocab, head_logprobs, head_ids = sampling.generate(\n"
+     "                key, model, weights, forward, sampler_init_kv, tokens, prompt_lengths,\n"
+     '                logprobs_dtype=jnp.float32 if vocab_logprobs == "full" else None,\n'
+     "                logprobs_topk=vocab_logprobs if isinstance(vocab_logprobs, int) else 0)",
+     "            tokens, token_logprobs, _, head_logprobs, head_ids = sampling.generate(\n"
+     "                key, model, weights, forward, sampler_init_kv, tokens, prompt_lengths,\n"
+     "                logprobs_topk=20)  # top-20 logprobs per position, as inference engines return"),
+    ("train_rl.py",
+     "        return batch, vocab, rollout.score(env.rubric, rows, texts, group_size), stats",
+     "        return batch, rollout.score(env.rubric, rows, texts, group_size), stats"),
+    ("train_rl.py",
+     "sample(eval_rows[i:i + num_prompts], weights, jax.random.fold_in(eval_key, i), eval_forward)[2]",
+     "sample(eval_rows[i:i + num_prompts], weights, jax.random.fold_in(eval_key, i), eval_forward)[1]"),
+    ("train_rl.py",
+     "        batch, vocab, rewards, stats = sample(\n"
+     "            rows, sampler_weights, sample_key, sampler_forward, cfg.sampler.vocab_logprobs)",
+     "        batch, rewards, stats = sample(rows, sampler_weights, sample_key, sampler_forward)"),
+    ("train_rl.py",
+     "        if vocab is not None:\n"
+     "            # Reshard only once the sampler weights are freed: source, destination\n"
+     "            # and collective scratch of this [B, T, V] array set the memory peak.\n"
+     '            batch["sampling_vocab_logprobs"] = reshard(vocab, NamedSharding(trainer_mesh, P("data", None, "model")))\n'
+     "            del vocab\n",
+     ""),
     ("losses.py",
-     """    batch: tokens, mask (completion tokens), advantages [B], and what the
-    sampler recorded while generating: sampling_token_logprobs [B, T] for the
-    sampled tokens, plus its next-token distribution at every position, either
-    as a top-k head sampler_topk_ids / sampler_topk_logprobs [B, T, k]
-    (sampler.vocab_logprobs=k) or in full as sampling_vocab_logprobs [B, T, V]
-    (sampler.vocab_logprobs=full).
-""",
-     """    batch: tokens, mask (completion tokens), advantages [B], and
-    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
-"""),
+     "    batch: tokens, mask (completion tokens), advantages [B], and what the\n"
+     "    sampler recorded while generating: sampling_token_logprobs [B, T] for the\n"
+     "    sampled tokens, plus its next-token distribution at every position, either\n"
+     "    as a top-k head sampler_topk_ids / sampler_topk_logprobs [B, T, k]\n"
+     "    (sampler.vocab_logprobs=k) or in full as sampling_vocab_logprobs [B, T, V]\n"
+     "    (sampler.vocab_logprobs=full).\n",
+     "    batch: tokens, mask (completion tokens), advantages [B], and\n"
+     "    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.\n"),
     ("losses.py",
      'sampler_keys = ("sampling_token_logprobs", "sampling_vocab_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")',
      'sampler_keys = ("sampling_token_logprobs",)'),
     ("README.md",
-     """For every generated position the sampler records the sampled token's logprob
-and its next-token distribution (`sampler.vocab_logprobs`: top-k, `full`, or
-`null`). The loss is in [`losses.py`](losses.py).""",
-     """The sampler records the logprob of every sampled token. The loss is in
-[`losses.py`](losses.py)."""),
+     "For every generated position the sampler records the sampled token's logprob\n"
+     "and its next-token distribution (`sampler.vocab_logprobs`: top-k, `full`, or\n"
+     "`null`). The loss is in [`losses.py`](losses.py).",
+     "The sampler records the logprob of every sampled token. The loss is in\n"
+     "[`losses.py`](losses.py)."),
 ]
+
+# models/topk.py, which only sampling.py uses, is folded into sampling.py as a
+# private helper, so no module of its own advertises the top-k recording.
+TOPK_RENAMES = [("class Carry(", "class _TopkCarry("), ("return Carry(", "return _TopkCarry("),
+                ("def init(", "def _topk_init("), ("def observe(", "def _topk_observe("),
+                ("def finalize(", "def _topk_finalize("), ("_compress(", "_topk_compress(")]
+SAMPLING_TOPK_RENAMES = [("\nfrom models import topk\n", ""), ("topk.Carry", "_TopkCarry"),
+                         ("topk.init(", "_topk_init("), ("topk.observe(", "_topk_observe("),
+                         ("topk.finalize(", "_topk_finalize(")]
+TOPK_HEADER = "# Top-k logprobs per decode step, kept without materializing [batch, seq, vocab].\n"
+
+
+def fold_topk(out):
+    topk_file, sampling_file = out / "models/topk.py", out / "models/sampling.py"
+    body = topk_file.read_text()
+    body = body[body.index("CHUNK = "):]  # drop the module docstring and imports
+    body = re.sub(r"\bCHUNK\b", "_TOPK_CHUNK", body)
+    for old, new in TOPK_RENAMES:
+        if old not in body:
+            raise SystemExit(f"models/topk.py: {old!r} not found")
+        body = body.replace(old, new)
+    sampling = sampling_file.read_text()
+    for old, new in SAMPLING_TOPK_RENAMES:
+        if old not in sampling:
+            raise SystemExit(f"models/sampling.py: {old!r} not found")
+        sampling = sampling.replace(old, new)
+    anchor = "\n\nclass SamplingState(NamedTuple):"
+    sampling = apply_edit(sampling, anchor, "\n\n" + TOPK_HEADER + body.rstrip() + "\n" + anchor, "models/sampling.py")
+    sampling_file.write_text(sampling)
+    topk_file.unlink()
+
 
 # Audit: words that would reveal the method or its source. A hit fails the
 # build unless its line matches an ALLOW pattern; LICENSE is exempt (the MIT
@@ -349,8 +453,9 @@ def transform(out, experiments=True):
     else:
         # no way to run training: no dev tooling, and the README does not mention it
         (out / "README.md").write_text(apply_edit(README, README_RUN_DEV, "", "README.md (no experiments)"))
-    for path, old, new in HIDE_SAMPLER_DIST_EDITS:
+    for path, old, new in SAMPLER_TOPK_EDITS:
         (out / path).write_text(apply_edit((out / path).read_text(), old, new, path))
+    fold_topk(out)
 
 
 def audit(out):

@@ -97,9 +97,16 @@ def test_starter_has_no_centering_option(losses):
     assert "score_center" not in inspect.signature(new.loss_fn_rl).parameters
 
 
-def test_sampler_topk_default(starter):
-    cfg = (starter / "train_rl.py").read_text()
-    assert "vocab_logprobs: null" in cfg  # revealed by the prompt from L3, not by the starter
+def test_sampler_returns_top20_without_a_setting(starter):
+    """The sampler's top-20 always reaches the batch, like an inference engine's
+    logprobs=20; no setting, module or loss docstring points at it."""
+    train = (starter / "train_rl.py").read_text()
+    assert "logprobs_topk=20" in train and '"sampler_topk_ids"' in train
+    assert not (starter / "models/topk.py").exists()
+    # the sampler itself keeps a generic full-logprobs option (models/sampling.py)
+    for name in ("train_rl.py", "losses.py", "README.md", "dev/mini.py", "run_dev.sh"):
+        text = (starter / name).read_text()
+        assert "vocab_logprobs" not in text and "sampling_vocab" not in text, name
 
 
 def test_starter_compiles(starter):

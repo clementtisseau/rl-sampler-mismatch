@@ -11,8 +11,9 @@ which the theory check and the judge do.
     python mini_check.py path/to/losses.py [key=value ...]   # JSON, exit 0 if passed
     python mini_check.py --calibrate                          # rewrite baselines.json
 
-Accepted key=value: sampler.vocab_logprobs (null | full | k) and rl.is.*
-(the agent's `## Configuration`); anything else is ignored.
+Accepted key=value: rl.is.* (the agent's `## Configuration`). The sampler
+gives the loss its top-20 logprobs, as the starter's does (mini.SAMPLER_TOPK);
+sampler.vocab_logprobs overrides it, for calibration and tests only.
 """
 import json
 import multiprocessing as mp
