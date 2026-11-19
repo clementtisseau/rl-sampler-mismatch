@@ -1,0 +1,46 @@
+--- a/losses.py
++++ b/losses.py
+@@ -1,8 +1,11 @@
+-"""REINFORCE with importance-sampling corrections.
++"""REINFORCE with importance-sampling corrections, centered on the sampler.
+ 
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+-sequence.
++sequence. On top of that, the per-token score is centered: its sampler
++expectation sum_y q(y|s) w(y|s) grad log p(y|s) is subtracted (see REPORT.md).
++This removes the drift that a constant part of the advantage induces when
++the tokens come from q != p, and is an exact no-op when q = p and w = 1.
+ """
+ import math
+ from typing import NamedTuple
+@@ -110,7 +113,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +123,19 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        score = w * logp
++        if "sampler_topk_ids" in b:
++            # Sampler-expectation of the same weighted score, over the sampler's top-k
++            # tokens (k = 20, the full vocabulary in dev/mini.py). Its gradient is
++            # sum_y q_y w_y grad log p_y, which is 0 on-policy (q = p, w = 1).
++            ids = b["sampler_topk_ids"]
++            logq_k = b["sampler_topk_logprobs"].astype(jnp.float32)
++            logp_k = take_vocab(logp_vocab, ids)
++            w_k = is_weight(logp_k - logq_k, positive[..., None], token_c) if token_c is not None else 1.0
++            base = (sg(jnp.exp(logq_k) * w_k) * logp_k).sum(-1)
++            score = score - base
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
