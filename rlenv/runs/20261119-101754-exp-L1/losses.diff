@@ -1,0 +1,24 @@
+--- a/losses.py
++++ b/losses.py
+@@ -51,6 +51,9 @@
+         return self
+ 
+ 
++DEFAULT_CORRECTION = ISCorrection(level="token", high=20.0, outside="clamp")
++
++
+ def log_mass(log_p, log_q, positive, c, tv=None):
+     """log(q * w(p/q)) under correction c (-inf where w = 0, log q for no
+     correction). Log space keeps the common in-band case q * (p/q) = p exact
+@@ -102,7 +105,10 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default (no correction given): unclipped token-level importance weight p/q,
++    # which makes the sampled-token score-function gradient unbiased (see REPORT.md).
++    # Only a far-out safety clamp (r <= e^3) guards against numerical blow-ups.
++    c = correction if correction is not None else DEFAULT_CORRECTION
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
