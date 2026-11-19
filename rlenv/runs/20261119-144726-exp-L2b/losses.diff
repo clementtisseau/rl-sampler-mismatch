@@ -1,0 +1,12 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,7 +102,8 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default: exact token-level importance weight w = p/q (no clipping). See REPORT.md.
++    c = ISCorrection().check() if correction is None else correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
