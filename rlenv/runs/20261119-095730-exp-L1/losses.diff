@@ -1,0 +1,23 @@
+--- a/losses.py
++++ b/losses.py
+@@ -80,6 +80,11 @@
+     return sg(jnp.exp(log_mass(jnp.clip(log_ratio, -20.0, 20.0), 0.0, positive, c, tv)))
+ 
+ 
++# Active by default: exact token-level importance weights p/q, clamped only at a
++# loose bound (e^2.3 = 10) that guards overflow/variance, not a tight trust region.
++DEFAULT_CORRECTION = ISCorrection(level="token", high=10.0, outside="clamp")
++
++
+ def take_vocab(logp, ids):
+     """take_along_axis over a [B, C, V] vocab axis that may be TP-sharded (the
+     gather drops that axis, so its output sharding must be explicit)."""
+@@ -102,6 +107,8 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
++    if correction is None:
++        correction = DEFAULT_CORRECTION
+     c = correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
