@@ -13,7 +13,8 @@ orchestrates (it launches the subagent with its Agent tool):
   3. python rlenv/claude_agent/run.py finish
      Copies losses.py and REPORT.md out of the container, runs the theory check
      and the CPU guard-rail in the grader image, writes results.json, then stops
-     the container and ends the run.
+     the container and ends the run. It also copies the subagent's full
+     transcript into rlenv/runs/<run>/transcripts/ (see copy_transcripts).
 
 `python rlenv/claude_agent/run.py abort` ends an active run without grading.
 """
@@ -91,6 +92,30 @@ def end(meta):
     STATE.unlink(missing_ok=True)
 
 
+TRANSCRIPTS = Path.home() / ".claude" / "projects"
+
+
+def copy_transcripts(run_dir, log):
+    """Copy the full transcript of each subagent that worked on this run (its
+    messages, tool calls and tool outputs, from Claude Code's session store)
+    into run_dir/transcripts/, with its metadata (requested and served model).
+    Returns the number of transcripts copied."""
+    if not log.exists():
+        return 0
+    ids = sorted({json.loads(line)["agent_id"] for line in open(log) if line.strip()})
+    out = run_dir / "transcripts"
+    copied = 0
+    for agent_id in ids:
+        for suffix, name in ((".jsonl", "transcript.jsonl"), (".meta.json", "meta.json"),
+                             (".prefix.json", "prefix.json")):
+            src = sorted(TRANSCRIPTS.glob(f"*/*/subagents/agent-{agent_id}{suffix}"))
+            if src:
+                out.mkdir(exist_ok=True)
+                (out / f"{agent_id}.{name}").write_bytes(src[-1].read_bytes())
+                copied += suffix == ".jsonl"
+    return copied
+
+
 def finish(args):
     if not STATE.exists():
         sys.exit("no active run")
@@ -115,6 +140,7 @@ def finish(args):
         results["guard"] = shared.run_grader_sync(losses, [*shared.GUARD_ARGS, *config], 3600)
     log = Path(meta["log"])
     results["agent_commands"] = sum(1 for _ in open(log)) if log.exists() else 0
+    results["transcripts"] = copy_transcripts(run_dir, log)
     (run_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     end(meta)
     summary = {k: results.get(k) for k in ("run_id", "minutes", "submitted", "changed", "agent_commands")}

@@ -60,3 +60,22 @@ def test_final_report_passes_and_everything_is_logged(active):
     call({"agent_id": "a", "tool_name": "Read", "tool_input": {}}, None)
     decisions = [json.loads(l)["decision"] for l in active.read_text().splitlines()]
     assert decisions == ["pass", "deny"]
+
+
+def test_copy_transcripts(tmp_path, monkeypatch):
+    """finish copies each logged subagent's transcript and metadata into the run."""
+    sys.path.insert(0, str(ROOT / "rlenv/claude_agent"))
+    import run
+    store = tmp_path / "projects" / "proj" / "session" / "subagents"
+    store.mkdir(parents=True)
+    (store / "agent-abc.jsonl").write_text('{"type": "user"}\n')
+    (store / "agent-abc.meta.json").write_text('{"model": "haiku"}')
+    monkeypatch.setattr(run, "TRANSCRIPTS", tmp_path / "projects")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    log = run_dir / "agent_log.jsonl"
+    log.write_text('{"agent_id": "abc", "tool": "Bash"}\n{"agent_id": "abc", "tool": "Bash"}\n')
+    assert run.copy_transcripts(run_dir, log) == 1
+    assert (run_dir / "transcripts/abc.transcript.jsonl").read_text() == '{"type": "user"}\n'
+    assert (run_dir / "transcripts/abc.meta.json").exists()
+    assert run.copy_transcripts(run_dir, run_dir / "missing.jsonl") == 0

@@ -33,6 +33,11 @@ des sous-agents de Claude Code.
 3. `python3 rlenv/claude_agent/run.py finish` récupère `losses.py` et
    `REPORT.md`, lance le test théorique et le garde-fou dans l'image du
    correcteur, écrit `results.json`, supprime le conteneur et désactive le run.
+   Il copie aussi la transcription complète du sous-agent (messages, appels
+   d'outils et leurs sorties) dans `rlenv/runs/<run>/transcripts/`, avec le
+   modèle demandé (`<id>.meta.json`) et le modèle servi (`<id>.prefix.json`).
+   Les blocs de raisonnement interne y sont vides : Claude Code ne les
+   conserve pas.
    `abort` arrête un run sans le noter.
 
 ## Limites
