@@ -1,0 +1,38 @@
+--- a/losses.py
++++ b/losses.py
+@@ -110,7 +110,8 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
++    has_topk = "sampler_topk_ids" in batch
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -118,10 +119,24 @@
+         logp_vocab = jax.nn.log_softmax(head(b["hidden"]).astype(jnp.float32))
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
++        if has_topk:
++            # q-centered score: subtract b = E_{v~q} log p(v) (top-k of q, tail as one bucket).
++            # E_q[grad(logp_a - b)] = 0 exactly, so no drift when A is constant.
++            ids = b["sampler_topk_ids"]
++            qk = jnp.exp(b["sampler_topk_logprobs"].astype(jnp.float32))
++            qk = sg(qk)
++            logp_k = take_vocab(logp_vocab, ids)
++            q_tail = sg(jnp.clip(1.0 - qk.sum(-1), 0.0, 1.0))
++            p_k = jnp.exp(logp_k).sum(-1)
++            log_p_tail = jnp.log(jnp.maximum(1.0 - p_k, 1e-6))
++            baseline = (qk * logp_k).sum(-1) + q_tail * log_p_tail
++            logp_c = logp - baseline
++        else:
++            logp_c = logp
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp_c, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
