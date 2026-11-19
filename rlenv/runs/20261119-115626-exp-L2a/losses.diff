@@ -1,0 +1,31 @@
+--- a/losses.py
++++ b/losses.py
+@@ -112,6 +112,11 @@
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+     sampler_keys = ("sampling_token_logprobs",)
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
++    # Sampler's top-k distribution at each position (inference engines return it): gives the
++    # sampler-side expected score E_q[grad log p] that the baseline below cancels.
++    use_baseline = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
++    if use_baseline:
++        per_token |= {"topk_ids": batch["sampler_topk_ids"], "topk_logprobs": batch["sampler_topk_logprobs"]}
+ 
+     def chunk_sums(start):
+         b = {k: jax.lax.dynamic_slice_in_dim(v, start, chunk, axis=1) for k, v in per_token.items()}
+@@ -120,8 +125,15 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        # Score-function baseline: subtract the sampler-expected score sum_v q(v) log p(v) (q detached,
++        # over its top-k support). Its gradient is the mismatch bias sum_v q(v) grad log p(v).
++        base = 0.0
++        if use_baseline:
++            q_top = jnp.exp(b["topk_logprobs"].astype(jnp.float32))
++            base = (sg(q_top) * take_vocab(logp_vocab, b["topk_ids"])).sum(-1)
++        score = logp - base
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
