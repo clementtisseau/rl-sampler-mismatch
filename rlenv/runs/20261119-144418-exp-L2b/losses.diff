@@ -1,0 +1,14 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,7 +102,10 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default (no correction): unbiased token-level importance sampling, w = p/q (detached),
++    # i.e. gradient A * grad(p/q). Its expectation under q is A * grad sum_x p(x) = 0 for any
++    # prefix-constant A, exactly as on-policy. Clipping/dropping would break this identity.
++    c = correction if correction is not None else ISCorrection(level="token")
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
