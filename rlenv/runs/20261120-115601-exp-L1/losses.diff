@@ -1,0 +1,95 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,16 +91,65 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++TAIL_FLOOR = 1e-6  # smallest tail mass outside the sampler's top-k
++
++
++def sampler_centering(logp_vocab, logp, b, positive, c, has_topk):
++    """Per-position centering term  sum_v sg(m_v) log p_v  whose gradient
++    E_m[grad log p] makes the score of the sampled token zero-mean under the
++    sampler, with weights w(p/q):  E_{y~q}[w(y) (grad log p(y) - E_m grad log p)] = 0
++    for m_v = q_v w(p_v/q_v) / sum_u q_u w(p_u/q_u)  (README: log_mass).
++
++    q is known on the sampler's top-k ids; its remaining mass q_rest is spread
++    over the other tokens in proportion to p (so the tail ratio is the constant
++    p_rest/q_rest). The tail sum uses sum_v p_v grad log p_v = 0, so nothing
++    full-vocabulary is materialized beyond log_softmax. Without top-k logprobs
++    m = p, i.e. no centering (the plain REINFORCE score)."""
++    if not has_topk:
++        return sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # E_p[grad log p] = 0
++    ids, logq_k = b["sampler_topk_ids"], b["sampler_topk_logprobs"].astype(jnp.float32)
++    logp_k = take_vocab(logp_vocab, ids)                                # [B, C, K]
++    # mass outside the top-k, floored: a near-empty tail is float32 noise
++    q_rest = jnp.clip(-jnp.expm1(jnp.minimum(jax.nn.logsumexp(logq_k, -1), 0.0)), TAIL_FLOOR, 1.0)  # [B, C]
++    p_rest = jnp.clip(-jnp.expm1(jnp.minimum(jax.nn.logsumexp(sg(logp_k), -1), 0.0)), TAIL_FLOOR, 1.0)
++    log_qr, log_pr = jnp.log(q_rest), jnp.log(p_rest)
++    lr_k = jnp.clip(sg(logp_k) - logq_k, -20.0, 20.0)
++    lr_t = jnp.clip(log_pr - log_qr, -20.0, 20.0)
++    pos = positive[..., None]
++    tv_k = jnp.abs(jnp.exp(logq_k) - sg(jnp.exp(logp_k)))
++    # unnormalized log masses log(q w(p/q)): top-k entries, and the tail as a whole
++    lm_k = log_mass(lr_k + logq_k, logq_k, pos, c, tv_k)
++    lm_t = log_mass(lr_t + log_qr, log_qr, positive, c, jnp.zeros_like(log_qr))
++    log_z = jnp.logaddexp(jax.nn.logsumexp(lm_k, -1), lm_t)
++    m_k = sg(jnp.exp(lm_k - log_z[..., None]))
++    m_t = sg(jnp.exp(lm_t - log_z))                                      # tail mass of m
++    m_k = jnp.where(jnp.isfinite(m_k), m_k, 0.0)
++    m_t = jnp.where(jnp.isfinite(m_t), m_t, 0.0)
++    # tail: m_v = m_t p_v / p_rest, and sum_tail p_v log p_v = sum_all - sum_topk
++    plogp_all = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))
++    tail = (m_t / p_rest) * (plogp_all - (sg(jnp.exp(logp_k)) * logp_k).sum(-1))
++    return (m_k * logp_k).sum(-1) + tail
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+-    """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+-    Returns (loss, metrics).
++    """REINFORCE loss on sampled rollouts, with an optional ISCorrection and a
++    sampler-centered score function. Returns (loss, metrics).
++
++    Each token's score grad log p(y) is replaced by grad log p(y) - E_m[grad log p],
++    with m = q w(p/q) normalized (m = q without a correction). The plain score
++    has mean q - p (in logit space) under the sampler, so every advantage that
++    does not average to zero drags p along +-(q - p): a systematic drift that
++    the sampler refresh turns into a feedback loop. The centered score has
++    mean zero under the sampler for any weight w (see REPORT.md).
+ 
+     hidden [B, T, D] are pre-head activations and head maps them to logits.
+     The head, log-softmax and all full-vocabulary float32 intermediates run in
+     rematerialized chunks of `chunk` positions, so only [B, chunk, V] is live.
+ 
+     batch: tokens, mask (completion tokens), advantages [B], and
+-    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens;
++    optionally sampler_topk_ids / sampler_topk_logprobs [B, T, K], the sampler's
++    top-k next-token logprobs (used for the centering).
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -110,7 +159,8 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
++    has_topk = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,9 +170,11 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        center = sampler_centering(logp_vocab, logp, b, positive, token_c, has_topk)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+-        return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
++        terms = {"score": w * (logp - center), "entropy": -plogp, "kl_samp_train": sg(logq - logp),
++                 "masked": w == 0, "tv": tv}
++        return {k: (jnp.where(b["mask"], v, 0) * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+     sums = {k: v.sum(0) for k, v in chunks.items()}  # per-sequence sums [B]
