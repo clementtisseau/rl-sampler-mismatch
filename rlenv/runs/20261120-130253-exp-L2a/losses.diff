@@ -1,0 +1,61 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,29 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++def sampler_baseline(logp_vocab, top_ids, top_logq, positive, c):
++    """sum_v q_v w(p_v/q_v) log p_v with q_v, w detached: its gradient is the
++    sampler expectation of the per-token score w(y) grad log p(y).
++
++    The sampler returns its top-k logprobs; the remaining mass Q_t is spread
++    like p over the other tokens (q_v = Q_t p_v / P_t), so they share the ratio
++    P_t / Q_t and contribute Q_t w(P_t/Q_t) log P_t."""
++    logp_top = take_vocab(logp_vocab, top_ids)                      # [B, C, k]
++    top_logq = top_logq.astype(jnp.float32)
++    pos = positive[..., None]
++    q_top = sg(jnp.exp(top_logq))
++    w_top = is_weight(sg(logp_top) - top_logq, pos, c, sg(jnp.abs(q_top - jnp.exp(logp_top))))
++    head_term = (q_top * w_top * logp_top).sum(-1)
++    # tail masses, in log space; clamp to keep log(0) out of the graph
++    log_qt = jnp.log1p(-jnp.minimum(q_top.sum(-1), 1.0 - 1e-6))
++    p_top_sum = jnp.exp(jax.nn.logsumexp(logp_top, -1))
++    log_pt = jnp.log1p(-jnp.minimum(p_top_sum, 1.0 - 1e-6))
++    q_t = sg(jnp.exp(log_qt))
++    w_t = is_weight(sg(log_pt) - log_qt, positive, c, sg(jnp.abs(q_t - jnp.exp(log_pt))))
++    tail_term = jnp.where(q_t > 1e-6, q_t * w_t * log_pt, 0.0)
++    return head_term + tail_term
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -110,7 +133,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +143,18 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        # Center the weighted score under the sampler: subtract its q-expectation
++        # E_{v~q}[w(v) grad log p(v)] (see REPORT.md), so a token's expected update
++        # vanishes whatever its advantage. On-policy (q = p, w = 1) it is exactly 0.
++        if "sampler_topk_logprobs" in b:
++            baseline = sampler_baseline(logp_vocab, b["sampler_topk_ids"], b["sampler_topk_logprobs"],
++                                        positive, token_c)
++        else:  # no sampler distribution: full token IS, whose score is also q-centered (REPORT.md)
++            baseline = 0.0
++            if token_c is None:
++                w = is_weight(logp - logq, positive, ISCorrection())
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp - baseline, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
