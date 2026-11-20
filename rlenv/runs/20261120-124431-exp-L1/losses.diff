@@ -1,0 +1,44 @@
+--- a/losses.py
++++ b/losses.py
+@@ -80,6 +80,9 @@
+     return sg(jnp.exp(log_mass(jnp.clip(log_ratio, -20.0, 20.0), 0.0, positive, c, tv)))
+ 
+ 
++DEFAULT_CORRECTION = ISCorrection(level="token", high=10.0, outside="clamp")
++
++
+ def take_vocab(logp, ids):
+     """take_along_axis over a [B, C, V] vocab axis that may be TP-sharded (the
+     gather drops that axis, so its output sharding must be explicit)."""
+@@ -102,7 +105,10 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default (correction=None): self-normalized, capped token-level IS on
++    # batch-centered advantages (see REPORT.md).
++    c = correction if correction is not None else DEFAULT_CORRECTION
++    batch = dict(batch, advantages=batch["advantages"] - batch["advantages"].mean())
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
+@@ -121,7 +127,7 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "wsum": w, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+@@ -138,7 +144,9 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+-    loss = -(advantages * sums["score"]).sum() / n_tokens
++    # self-normalized: divide by the total IS weight, not the token count
++    denom = jnp.maximum(sums["wsum"].sum(), 1.0) if not seq_c else n_tokens
++    loss = -(advantages * sums["score"]).sum() / denom
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}

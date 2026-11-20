@@ -1,0 +1,95 @@
+{
+  "run_id": "20261120-124431-exp-L1",
+  "level": "L1",
+  "experiments": true,
+  "minutes": 22.4,
+  "submitted": true,
+  "changed": true,
+  "configuration": [],
+  "theory": {
+    "passed": false,
+    "passed_topk": false,
+    "scenarios": {
+      "full": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.0,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      },
+      "topk": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.0,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      }
+    },
+    "passed_with_tis": false,
+    "with_tis": {
+      "full": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.0,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      },
+      "topk": {
+        "passed": false,
+        "checks": {
+          "no_drift": true,
+          "no_drift_prefix": true,
+          "on_policy": false,
+          "bounded": true
+        },
+        "worst": {
+          "no_drift": 0.0,
+          "no_drift_prefix": 0.0,
+          "on_policy": 1.0,
+          "bounded": 0.0,
+          "alignment": 0.0
+        }
+      }
+    }
+  },
+  "guard": {
+    "passed": true,
+    "normalized": 1.2822581151273884,
+    "final_eval_reward": [
+      0.8910155892372131,
+      0.8542968034744263,
+      0.8742186427116394
+    ],
+    "reinforce": 0.6661458810170492,
+    "score_centering": 0.8276041150093079
+  },
+  "agent_commands": 11,
+  "transcripts": 1
+}
