@@ -1,0 +1,116 @@
+--- a/losses.py
++++ b/losses.py
+@@ -1,8 +1,9 @@
+-"""REINFORCE with importance-sampling corrections.
++"""REINFORCE with importance-sampling corrections and sampler-centered scores.
+ 
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+-sequence.
++sequence. Every token score is centered by its expectation under the sampler,
++which removes the mismatch drift (REPORT.md).
+ """
+ import math
+ from typing import NamedTuple
+@@ -91,16 +92,68 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++def _log1mexp(x):
++    """log(1 - exp(x)) for x <= 0, stable at both ends."""
++    x = jnp.minimum(x, -1e-7)
++    return jnp.where(x > -0.6931, jnp.log(-jnp.expm1(x)), jnp.log1p(-jnp.exp(x)))
++
++
++def sampler_centering(logp_vocab, logp, b, positive, c):
++    """Per-token control variate that makes the score zero-mean under the
++    sampler q (REPORT.md). Returns cv with sg-coefficients such that
++
++        grad cv = E_{v ~ q}[ w(p(v)/q(v)) grad log p(v) ] = sum_v m(v) grad log p(v),
++
++    m(v) = q(v) w(p(v)/q(v)) = exp(log_mass) (m = q without a correction).
++    The sum is exact on the sampler's top-k ids; the remaining sampler mass is
++    spread over the other tokens in proportion to p (one pooled term). Without
++    top-k logprobs (only reached with a token correction), K is the sampled
++    token alone (same pooling, coarser)."""
++    if "sampler_topk_ids" in b:
++        ids = b["sampler_topk_ids"]
++        logq_k = jnp.clip(b["sampler_topk_logprobs"].astype(jnp.float32), -80.0, 0.0)
++    else:
++        ids = b["targets"][..., None]
++        logq_k = jnp.clip(b["sampling_token_logprobs"][..., None].astype(jnp.float32), -80.0, 0.0)
++    logq_k = jnp.where(jnp.isfinite(logq_k), logq_k, -80.0)
++    logp_k = take_vocab(logp_vocab, ids)                                   # [B, C, K]
++    # pooled tail: everything outside K
++    logq_sum = jax.nn.logsumexp(logq_k, -1)
++    logp_sum = jax.nn.logsumexp(logp_k, -1)
++    logq_rest = _log1mexp(jnp.minimum(logq_sum, 0.0))
++    logp_rest = _log1mexp(jnp.minimum(logp_sum, 0.0))
++    pos = positive[..., None]
++    tv_k = sg(jnp.abs(jnp.exp(logq_k) - jnp.exp(logp_k)))
++    m_k = jnp.exp(log_mass(sg(logp_k), logq_k, pos, c, tv_k))
++    tv_rest = sg(jnp.abs(jnp.exp(logq_rest) - jnp.exp(logp_rest)))
++    m_rest = jnp.exp(log_mass(sg(logp_rest), logq_rest, positive, c, tv_rest))
++    # a negligible tail (e.g. K covers the whole vocabulary) contributes nothing
++    live_rest = (jnp.exp(logq_rest) > 1e-6) & (jnp.exp(logp_rest) > 1e-12)
++    m_rest = jnp.where(live_rest, m_rest, 0.0)
++    m_k = jnp.where(jnp.isfinite(m_k), m_k, 0.0)
++    m_rest = jnp.where(jnp.isfinite(m_rest), m_rest, 0.0)
++    safe_logp_rest = jnp.where(live_rest, logp_rest, 0.0)
++    return (sg(m_k) * logp_k).sum(-1) + sg(m_rest) * safe_logp_rest
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+-    """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+-    Returns (loss, metrics).
++    """REINFORCE loss on sampled rollouts, with an optional ISCorrection,
++    and with every token's score centered under the sampler (REPORT.md):
++
++        score_t = w_t log p(y_t) - sum_v sg(q(v) w(p(v)/q(v))) log p(v)
++
++    so that E_{y_t ~ q}[grad score_t | state] = 0 for any (detached) weight w.
++    The advantage then only acts through which token was chosen, never through
++    the sampler/trainer mismatch itself. With q = p and no correction this is
++    exactly REINFORCE (sum_v p grad log p = 0). Returns (loss, metrics).
+ 
+     hidden [B, T, D] are pre-head activations and head maps them to logits.
+     The head, log-softmax and all full-vocabulary float32 intermediates run in
+     rematerialized chunks of `chunk` positions, so only [B, chunk, V] is live.
+ 
+     batch: tokens, mask (completion tokens), advantages [B], and
+-    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens;
++    optionally sampler_topk_ids / sampler_topk_logprobs [B, T, K].
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -110,7 +163,8 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
++    has_topk = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -119,9 +173,17 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if has_topk or token_c is not None:
++            w = is_weight(logp - logq, positive, token_c, tv)
++            cv = sampler_centering(logp_vocab, logp, b, positive, token_c)
++        else:
++            # no sampler distribution to center with: the unclipped token ratio
++            # gives the same zero-mean score (m = q * p/q = p, sum_v p grad log p = 0)
++            w = is_weight(logp - logq, positive, ISCorrection(), tv)
++            cv = 0.0
++        score = jnp.where(b["mask"], w * logp - cv, 0.0)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
