@@ -1,0 +1,110 @@
+--- a/losses.py
++++ b/losses.py
+@@ -1,4 +1,4 @@
+-"""REINFORCE with importance-sampling corrections.
++"""REINFORCE with a sampler-centered score and importance-sampling corrections.
+ 
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+@@ -92,15 +92,25 @@
+ 
+ 
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+-    """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+-    Returns (loss, metrics).
++    """REINFORCE loss on sampled rollouts with a q-centered score, and an
++    optional ISCorrection. Returns (loss, metrics).
++
++    The per-token score w(y) * grad log p(y) is centered by subtracting its
++    own expectation under the sampler q at that prefix,
++        E_{y'~q}[w(y') grad log p(y')] = grad sum_v sg(q_v w_v) log p_v,
++    so that a component of the advantage that does not depend on the sampled
++    token produces no update even when q != p (REPORT.md). On-policy (q = p,
++    w = 1) the control term has zero gradient and this is plain REINFORCE.
++    q over the vocabulary is the sampler's top-k logprobs; the remaining mass
++    is spread over the other tokens in proportion to p.
+ 
+     hidden [B, T, D] are pre-head activations and head maps them to logits.
+     The head, log-softmax and all full-vocabulary float32 intermediates run in
+     rematerialized chunks of `chunk` positions, so only [B, chunk, V] is live.
+ 
+-    batch: tokens, mask (completion tokens), advantages [B], and
+-    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
++    batch: tokens, mask (completion tokens), advantages [B],
++    sampling_token_logprobs [B, T], the sampler's logprobs of the sampled
++    tokens, and optionally sampler_topk_ids / sampler_topk_logprobs [B, T, K].
+     """
+     c = correction
+     token_c = c if c and c.level == "token" else None
+@@ -110,19 +120,58 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    has_topk = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
++    if not has_topk and c is None:
++        # Only q(y) is known: the one zero-mean score built from it is the
++        # unclipped token ratio, p/q * grad log p (its q-expectation is 0).
++        token_c = ISCorrection()
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+         b = {k: jax.lax.dynamic_slice_in_dim(v, start, chunk, axis=1) for k, v in per_token.items()}
++        live = b["mask"]
+         logp_vocab = jax.nn.log_softmax(head(b["hidden"]).astype(jnp.float32))
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+-        logq = b["sampling_token_logprobs"]
++        logq = b["sampling_token_logprobs"].astype(jnp.float32)
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+-        plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+-        return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
++        p_vocab = sg(jnp.exp(logp_vocab))
++        s_all = (p_vocab * logp_vocab).sum(-1)  # sum_v sg(p_v) log p_v
++
++        # Known sampler entries: top-k, or else only the sampled token.
++        if has_topk:
++            ids = b["sampler_topk_ids"].astype(b["targets"].dtype)
++            logq_k = b["sampler_topk_logprobs"].astype(jnp.float32)
++        else:
++            ids, logq_k = b["targets"][..., None], logq[..., None]
++        logq_k = jnp.where(live[..., None], logq_k, 0.0)  # padding: keep finite
++        logp_k = take_vocab(logp_vocab, ids)  # [B, C, K], carries gradient
++        q_k, p_k = jnp.exp(logq_k), sg(jnp.exp(logp_k))
++        # Remaining sampler mass, spread over the other tokens like p.
++        q_tail = jnp.clip(1.0 - q_k.sum(-1), 0.0, 1.0)
++        p_tail = 1.0 - p_k.sum(-1)
++        ok_tail = (p_tail > 1e-6) & (q_tail > 0)
++        p_tail = jnp.where(ok_tail, p_tail, 1.0)
++        q_tail = jnp.where(ok_tail, q_tail, 0.0)
++        s_tail = s_all - (p_k * logp_k).sum(-1)  # sum_{v not in K} sg(p_v) log p_v
++        # Sampler mass times IS weight, m_v = q_v w(p_v / q_v), on known entries and the tail.
++        if token_c is None:
++            m_k, m_tail = q_k, q_tail
++        else:
++            pos_k = positive[..., None]
++            tv_k = jnp.abs(q_k - p_k)
++            m_k = jnp.exp(log_mass(sg(logp_k), logq_k, pos_k, token_c, tv_k))
++            log_pt, log_qt = jnp.log(p_tail), jnp.log(jnp.maximum(q_tail, 1e-30))
++            m_tail = jnp.where(ok_tail, jnp.exp(log_mass(log_pt, log_qt, positive, token_c,
++                                                       jnp.abs(q_tail - p_tail))), 0.0)
++        m_k, m_tail = sg(m_k), sg(m_tail)
++        # E_{y~q}[w(y) log p(y)] as a function of the trainer's logits.
++        control = (m_k * logp_k).sum(-1) + (m_tail / p_tail) * s_tail
++        score = w * logp - control
++        terms = {"score": score, "entropy": -sg(s_all), "kl_samp_train": sg(logq - logp), "masked": w == 0,
++                 "tv": tv, "q_mass_known": sg(q_k.sum(-1))}
++        return {k: jnp.where(live, v, 0).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+     sums = {k: v.sum(0) for k, v in chunks.items()}  # per-sequence sums [B]
+@@ -139,6 +188,6 @@
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+     loss = -(advantages * sums["score"]).sum() / n_tokens
+-    metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
++    metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train", "q_mass_known") if k in sums}
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}
