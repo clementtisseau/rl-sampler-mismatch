@@ -1,0 +1,13 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,7 +102,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default: exact token-level IS weight w=p/q (no band), which makes the per-position
++    # expected update sum_a q(a) (p/q) A grad log p = A grad sum_a p = 0 for the A-independent part.
++    c = correction if correction is not None else ISCorrection(level="token", low=0.0, high=math.inf, outside="clamp")
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
