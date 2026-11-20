@@ -1,0 +1,24 @@
+--- a/losses.py
++++ b/losses.py
+@@ -91,6 +91,10 @@
+     return logp.at[b, c, ids].get(out_sharding=P(*spec[:-1], None))
+ 
+ 
++# Naive token IS, weights only guarded against numerical blow-up (ratio in [e^-4, e^4], clamp).
++DEFAULT_CORRECTION = ISCorrection(level="token", low=math.exp(-4), high=math.exp(4), outside="clamp")
++
++
+ def loss_fn_rl(hidden, head, batch, correction=None, chunk=128):
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+@@ -102,7 +106,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default (correction=None): unbiased token-level importance sampling,
++    # E_q[(p/q) grad log p] = E_p[grad log p] = 0 restored; see REPORT.md.
++    c = correction if correction is not None else DEFAULT_CORRECTION
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
