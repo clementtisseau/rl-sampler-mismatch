@@ -1,0 +1,44 @@
+--- a/losses.py
++++ b/losses.py
+@@ -95,6 +95,10 @@
+     """REINFORCE loss on sampled rollouts, with an optional ISCorrection.
+     Returns (loss, metrics).
+ 
++    Token-level weights are self-normalized over the batch: the loss is
++    -sum_t A_t w_t log p_t / sum_t w_t, with w_t detached. With correction=None
++    the weight is the plain ratio w_t = p_t / q_t (see REPORT.md).
++
+     hidden [B, T, D] are pre-head activations and head maps them to logits.
+     The head, log-softmax and all full-vocabulary float32 intermediates run in
+     rematerialized chunks of `chunk` positions, so only [B, chunk, V] is live.
+@@ -119,9 +123,13 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if correction is None:
++            w = sg(jnp.exp(jnp.clip(logp - logq, -20.0, 20.0)))  # plain ratio p/q
++        else:
++            w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "wsum": w, "wsq": w * w, "entropy": -plogp,
++                 "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+@@ -138,7 +146,13 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+-    loss = -(advantages * sums["score"]).sum() / n_tokens
++    if token_c is None and correction is not None:
++        # sequence-level correction: token weights are 1, plain token mean
++        norm = n_tokens
++    else:
++        norm = jnp.maximum(sums["wsum"].sum(), 1e-8)
++    loss = -(advantages * sums["score"]).sum() / norm
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
++    metrics["ess_frac"] = sums["wsum"].sum() ** 2 / jnp.maximum(n_tokens * sums["wsq"].sum(), 1e-8)
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}
