@@ -1,0 +1,35 @@
+--- a/losses.py
++++ b/losses.py
+@@ -119,9 +119,14 @@
+         logp = take_vocab(logp_vocab, b["targets"][..., None])[..., 0]
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+-        w = is_weight(logp - logq, positive, token_c, tv)
++        if correction is None:
++            # default: per-token trainer/sampler ratio (see REPORT.md), not clipped
++            w = sg(jnp.exp(jnp.clip(logp - logq, -20.0, 20.0)))
++        else:
++            w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv,
++                 "w_sum": w}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
+@@ -138,7 +143,14 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+-    loss = -(advantages * sums["score"]).sum() / n_tokens
++    if correction is None:
++        # self-normalized IS: divide by the batch mean ratio (detached), which bounds
++        # the weights' scale without clipping and keeps the baseline term zero-mean
++        z = sg(jnp.maximum(sums["w_sum"].sum() / n_tokens, 1e-6))
++        loss = -(advantages * sums["score"]).sum() / (n_tokens * z)
++    else:
++        loss = -(advantages * sums["score"]).sum() / n_tokens
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
++    metrics["is_weight_mean"] = sums["w_sum"].sum() / n_tokens
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}
