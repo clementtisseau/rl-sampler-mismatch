@@ -1,0 +1,26 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,7 +102,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default: exact token-level importance weight w = p/q (detached), clipped
++    # only far out (a variance guard), and per-sequence length normalisation.
++    c = correction if correction is not None else ISCorrection(level="token", low=0.0, high=10.0, outside="clamp")
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
+@@ -138,7 +140,11 @@
+         w = is_weight(log_ratio, advantages >= 0, seq_c, sums["tv"] / seq_tokens)
+         advantages = advantages * w
+         frac_masked = (w == 0).mean()  # fraction of sequences
+-    loss = -(advantages * sums["score"]).sum() / n_tokens
++    # each sequence gets weight 1/len, so group-centred advantages sum to zero over
++    # sequences and the (q-p) bias term b*(q-p) does not get a net-negative b from
++    # long failed rollouts
++    seq_len_tok = jnp.maximum(mask.sum(1), 1)
++    loss = -(advantages * sums["score"] / seq_len_tok).sum() / jnp.maximum((mask.sum(1) > 0).sum(), 1)
+     metrics = {k: sums[k].sum() / n_tokens for k in ("entropy", "kl_samp_train") if k in sums}
+     metrics["pol_entropy"] = metrics.pop("entropy")
+     return loss, metrics | {"frac_masked": frac_masked}
