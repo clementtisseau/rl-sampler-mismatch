@@ -1,0 +1,29 @@
+--- a/losses.py
++++ b/losses.py
+@@ -110,7 +110,7 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -120,8 +120,16 @@
+         logq = b["sampling_token_logprobs"]
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
++        if "sampler_topk_ids" in b:
++            # Control variate: subtract the sampler's expected logprob, E_q[log p] (over the
++            # sampler's top-k), so the score has zero mean under q, as log p does under p.
++            pi = sg(jax.nn.softmax(b["sampler_topk_logprobs"].astype(jnp.float32), -1))
++            baseline = (pi * take_vocab(logp_vocab, b["sampler_topk_ids"])).sum(-1)
++            logp_score = logp - baseline
++        else:
++            logp_score = logp
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        terms = {"score": w * logp_score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
