@@ -1,0 +1,13 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,6 +102,10 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
++    if correction is None:
++        # exact token-level IS weight p/q (see REPORT.md): the only weight for which
++        # E_q[w * grad log p] = 0, so baselines/negative advantages stay unbiased.
++        correction = ISCorrection(level="token")
+     c = correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
