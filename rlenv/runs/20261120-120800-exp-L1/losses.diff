@@ -1,0 +1,53 @@
+--- a/losses.py
++++ b/losses.py
+@@ -3,6 +3,13 @@
+ Every correction is REINFORCE with a detached weight w(r) on the ratio
+ r = p/q of trainer (p) to sampler (q) probabilities, per token or per
+ sequence.
++
++The score is centered under the sampler (see REPORT.md): each token's update
++w(y) grad log p(y) has its expectation under the sampler's distribution q
++(top-k logprobs returned with the rollout) subtracted, so a constant offset in
++the advantage produces no expected update even when q != p. This is on by
++default; up to the top-k tail it is a no-op on-policy (q = p, w = 1) and for
++untruncated naive IS.
+ """
+ import math
+ from typing import NamedTuple
+@@ -110,7 +117,8 @@
+     positive = batch["advantages"][:, None] >= 0
+     seq_len = targets.shape[1]
+     chunk = next(n for n in range(min(chunk, seq_len), 0, -1) if seq_len % n == 0)
+-    sampler_keys = ("sampling_token_logprobs",)
++    sampler_keys = ("sampling_token_logprobs", "sampler_topk_ids", "sampler_topk_logprobs")
++    centered = "sampler_topk_ids" in batch and "sampler_topk_logprobs" in batch
+     per_token = {"hidden": hidden, "targets": targets, "mask": mask} | {k: batch[k] for k in sampler_keys if k in batch}
+ 
+     def chunk_sums(start):
+@@ -121,7 +129,25 @@
+         tv = sg(jnp.abs(jnp.exp(logq) - jnp.exp(logp)))
+         w = is_weight(logp - logq, positive, token_c, tv)
+         plogp = sg((jnp.exp(logp_vocab) * logp_vocab).sum(-1))  # policy entropy metric
+-        terms = {"score": w * logp, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
++        # Sampler-centered score (see REPORT.md). The per-token update w(y) ∇log p(y)
++        # gets its expectation under the sampler, sum_v q(v) w(v) ∇log p(v), subtracted,
++        # with q from the sampler's top-k (the tail is implicitly spread like p,
++        # whose mean score is zero). Without a correction (w = 1) the logit-space
++        # update is A (e_y - q) instead of A (e_y - p): zero mean under the
++        # distribution the token was actually drawn from, for any advantage offset.
++        score = w * logp
++        if centered:
++            logp_k = take_vocab(logp_vocab, b["sampler_topk_ids"])
++            logq_k = b["sampler_topk_logprobs"].astype(jnp.float32)
++            q_k = jnp.where(jnp.isfinite(logq_k) & jnp.isfinite(logp_k), jnp.exp(logq_k), 0.0)
++            q_k = sg(q_k / jnp.maximum(q_k.sum(-1, keepdims=True), 1.0))  # at most unit mass
++            if token_c is None:
++                w_k = 1.0
++            else:
++                tv_k = sg(jnp.abs(q_k - jnp.exp(logp_k)))
++                w_k = is_weight(jnp.where(q_k > 0, logp_k - logq_k, 0.0), positive[..., None], token_c, tv_k)
++            score = score - (q_k * w_k * jnp.where(q_k > 0, logp_k, 0.0)).sum(-1)
++        terms = {"score": score, "entropy": -plogp, "kl_samp_train": sg(logq - logp), "masked": w == 0, "tv": tv}
+         return {k: (v * b["mask"]).sum(-1) for k, v in terms.items()}
+ 
+     chunks = jax.lax.map(jax.checkpoint(chunk_sums), jnp.arange(0, seq_len, chunk))
