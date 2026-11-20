@@ -1,0 +1,13 @@
+--- a/losses.py
++++ b/losses.py
+@@ -102,7 +102,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default: exact token-level IS weight w=p/q (no clipping), which makes the expected
++    # per-prefix update zero for any prefix-constant advantage (see REPORT.md).
++    c = ISCorrection(level="token", outside="clamp") if correction is None else correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
