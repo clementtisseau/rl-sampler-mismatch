@@ -1,0 +1,20 @@
+--- a/losses.py
++++ b/losses.py
+@@ -28,6 +28,7 @@
+     return advantages
+ 
+ 
++DEFAULT_CAP = 30.0  # variance guard; effectively unclipped for moderate mismatch
+ DUAL_CLIP = 3.0  # PPO's ratio bound for negative advantages (arXiv:1912.09729)
+ 
+ 
+@@ -102,6 +103,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
++    if correction is None:
++        # default: exact token-level importance weight r=p/q (see REPORT.md); soft cap only against overflow
++        correction = ISCorrection(level="token", high=DEFAULT_CAP, outside="clamp")
+     c = correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
