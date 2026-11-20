@@ -1,0 +1,21 @@
+--- a/losses.py
++++ b/losses.py
+@@ -28,6 +28,7 @@
+     return advantages
+ 
+ 
++IS_CAP = 10.0  # loose cap on the default token weight; only guards rare p >> q tokens
+ DUAL_CLIP = 3.0  # PPO's ratio bound for negative advantages (arXiv:1912.09729)
+ 
+ 
+@@ -102,7 +103,9 @@
+     batch: tokens, mask (completion tokens), advantages [B], and
+     sampling_token_logprobs [B, T], the sampler's logprobs of the sampled tokens.
+     """
+-    c = correction
++    # Default: exact token-level importance sampling. With no correction the
++    # score E_q[grad log p] != 0 under a mismatched sampler (see REPORT.md).
++    c = ISCorrection(level="token", high=IS_CAP, outside="clamp") if correction is None else correction
+     token_c = c if c and c.level == "token" else None
+     seq_c = c if c and c.level != "token" else None
+     targets = jnp.roll(batch["tokens"], -1, axis=1)
